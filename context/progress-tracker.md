@@ -6,7 +6,7 @@ Phase 0 — Product and engineering foundation
 
 ## Current goal
 
-Feature 01 — Foundation completed and verified. Ready for Feature 02 (Public customer feedback flow).
+Feature 02 — Public Customer Feedback Experience completed and verified. Ready for Feature 03 (AI-Assisted Review Draft Generation).
 
 ## Completed
 
@@ -21,6 +21,7 @@ Feature 01 — Foundation completed and verified. Ready for Feature 02 (Public c
 - Baseline architecture locked as a modular, multi-tenant monolith.
 - Customer feedback and Google review-management boundaries defined.
 - Feature 01 specification written and reviewed.
+- Feature 02 specification written and reviewed (`context/feature-specs/02-public-feedback.md`).
 - **Feature 01 — Foundation completed and verified (2026-09-16)**:
   - Next.js 16 (App Router) + TypeScript + Tailwind CSS v4 foundation scaffolded.
   - shadcn/ui primitive conventions created (`Button`, `Card`, `Input`, `Label`, `Badge`).
@@ -34,14 +35,32 @@ Feature 01 — Foundation completed and verified. Ready for Feature 02 (Public c
   - Production build tested and passing via Next.js Turbopack compiler.
   - Full developer workflow scripts configured: `lint`, `type-check`, `test`, `build`, `db:generate`, `db:migrate`, `db:seed`.
   - Comprehensive `README.md` and `.env.example` created.
+- **Feature 02 — Public Customer Feedback Experience completed and verified (2026-09-16)**:
+  - Extended Prisma schema with multi-tenant models: `Service`, `FeedbackSubmission`, and `FeedbackService` (preserving historical snapshots of service names).
+  - Configured Prisma seed with RM Solution development tenant (`slug: rm-solution`, `publicToken: rm-solution-dev`) and 9 active catalog services.
+  - Implemented domain services with strict tenant isolation:
+    - `domains/tenants`: `getTenantByPublicToken` (opaque public token resolution).
+    - `domains/services`: `getActiveServicesForTenant` (active service catalog retrieval).
+    - `domains/feedback`: Constants, types, Zod boundary validation schemas (`feedbackSubmissionSchema`), and core submission engine (`submitFeedback`).
+  - Implemented public feedback user experience (`/feedback/[publicToken]`):
+    - Server Component route with dynamic metadata and safe error/not-found/empty states.
+    - Mobile-first, responsive, accessible `FeedbackForm` Client Component:
+      - Accessible multi-select service cards with non-color-only checked states.
+      - Accessible 1–5 star rating radiogroup with text badge labels and keyboard navigation.
+      - Optional written feedback textarea with live character counter.
+      - Client & server validation error handling with field-level and form-level alerts.
+      - Safe submission via Server Action (`submitFeedbackAction`).
+      - Dedicated success state confirming receipt without automatic review publication or manipulative prompts.
+  - Added comprehensive test suite (`tests/public-feedback.test.ts` — 25 tests, total 42 tests passing across suite).
+  - Verified 100% clean passes on `lint`, `type-check`, `test`, `build`, and `db:generate`.
 
 ## In progress
 
-None (Feature 01 complete).
+None (Feature 02 complete).
 
 ## Next up
 
-1. Feature 02 — Public customer feedback experience specification and implementation.
+1. Feature 03 — AI-Assisted Review Draft Generation.
 
 ## Open questions / deferred decisions
 

@@ -53,12 +53,21 @@ Generate the Prisma client from schema:
 npm run db:generate
 ```
 
-For migrations (requires PostgreSQL running):
+For migrations and seed data (requires PostgreSQL running):
 
 ```bash
 # Create and run a migration
 npm run db:migrate
+
+# Seed development tenant (RM Solution) and initial service catalog
+npm run db:seed
 ```
+
+### Public Feedback Experience
+
+Public feedback links use opaque tenant public tokens:
+- URL structure: `/feedback/[publicToken]`
+- Example local development URL (after seeding): `http://localhost:3000/feedback/rm-solution-dev`
 
 ### Development Server
 

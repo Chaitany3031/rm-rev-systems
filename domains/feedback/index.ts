@@ -1,4 +1,4 @@
-/**
- * Feedback domain — public customer feedback submissions.
- * Placeholder for future feature implementation.
- */
+export * from "./constants";
+export * from "./types";
+export * from "./validation";
+export * from "./service";
