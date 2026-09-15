@@ -1,82 +1,218 @@
 # Architecture
 
-This document records decisions that affect the whole system. Unknown decisions must remain explicit rather than being invented by an AI coding agent.
+This document is the source of truth for whole-system decisions. Coding agents must not invent architecture, integrations, security behavior, or product rules.
 
-## Current status
+## Status
 
-Architecture is in design/foundation phase. Application implementation is blocked until the required decisions below are resolved.
+Baseline architecture is locked for Foundation implementation.
 
 ## Stack
 
-| Area | Decision | Status |
-|---|---|---|
-| Frontend | TBD | Open |
-| Backend/API | TBD | Open |
-| Database | TBD | Open |
-| Authentication | TBD | Open |
-| AI provider/model routing | TBD | Open |
-| Hosting/deployment | TBD | Open |
-| File/object storage | TBD | Open |
-| Observability | TBD | Open |
+| Area | Decision |
+|---|---|
+| Application | Next.js + TypeScript |
+| UI | Tailwind CSS + shadcn/ui |
+| Backend/API | Next.js server routes/actions + domain services |
+| Database | PostgreSQL |
+| ORM | Prisma |
+| Validation | Zod |
+| Authentication | Server-side auth abstraction; exact provider configuration deferred to Foundation |
+| Authorization | Tenant membership + roles |
+| AI | Provider-agnostic AI service interface |
+| Google integration | Official Google Business Profile APIs behind a dedicated integration boundary |
+| Google events | Business Profile Notifications API + Pub/Sub where applicable |
+| Async work | Worker/queue abstraction, introduced when required |
+| Testing | Vitest + Playwright |
+| Deployment | Vercel-compatible deployment + managed PostgreSQL |
+| Observability | Structured logs + error-tracking abstraction |
 
-## System boundaries
+## Architectural style
 
-The system has these conceptual boundaries:
+Version 1 is a **modular monolith**, not a microservice system. Domain boundaries must be explicit so individual domains can be extracted later if scale requires it.
 
-- Public customer feedback experience.
-- Private feedback storage.
-- AI review-drafting service.
-- Client/business configuration and service catalog.
-- Future administrative experience.
-- Optional external integrations such as Google Business Profile.
+Primary domains:
 
-External integrations must remain behind explicit service boundaries so they can be changed without rewriting the customer flow.
+- `tenants` — business identity, configuration, memberships, roles.
+- `services` — tenant-owned service catalog.
+- `feedback` — public customer feedback submissions.
+- `reviews` — review drafts and approval workflow owned by our application.
+- `ai` — generation, provider routing, prompts, and model metadata.
+- `google` — authorization, Business Profile locations, review synchronization, replies, and Google events.
+- `auth` — authentication/session integration and authorization helpers.
+- `audit` — security and business-action history.
+
+## Multi-tenancy
+
+The system is **multi-tenant from the beginning**. RM Solution is the first tenant, not a special code path.
+
+Conceptual ownership:
+
+```text
+Tenant
+├── Users / Memberships
+├── Services
+├── FeedbackSubmissions
+├── ReviewDrafts
+├── GoogleConnections
+├── GoogleLocations
+└── AuditLogs
+```
+
+Every tenant-owned resource must have a server-side tenant ownership check. An untrusted client identifier must never be sufficient to access another tenant's data.
+
+## Customer feedback flow
+
+```text
+Public feedback link / QR
+        ↓
+Tenant service catalog
+        ↓
+Service selection
+        ↓
+One overall 1–5 rating
+        ↓
+Optional written feedback
+        ↓
+Persist feedback
+        ↓
+AI review draft
+        ↓
+Customer edits/copies
+        ↓
+Customer decides whether to publish publicly
+```
+
+The customer does not need admin authentication. The initial rating model is one overall rating per submission, even when multiple services are selected.
+
+## Google Business Profile boundary
+
+Core feedback functionality must remain usable without a Google connection.
+
+The Google domain owns:
+
+- OAuth authorization and token lifecycle.
+- Authorized account/location discovery.
+- Linking a Google location to a tenant.
+- Review synchronization.
+- Review-reply publication/update.
+- Notification/Pub/Sub handling.
+- Google-specific errors, quotas, retries, and moderation states.
+
+Only the server-side Google integration may access Google credentials/tokens. The browser and AI layer must never receive Google OAuth tokens.
+
+Google functionality must always be implemented against current authoritative Google documentation and policies; unsupported behavior must never be inferred.
+
+## Google review workflow
+
+```text
+Google review
+      ↓
+Synchronize permitted local state
+      ↓
+Admin review inbox
+      ↓
+AI reply draft
+      ↓
+Admin edits/reviews
+      ↓
+Explicit approval
+      ↓
+Publish through Google API
+```
+
+Fully automatic reply publication is a later opt-in capability requiring explicit tenant authorization, auditable configuration, appropriate API access, and policy-compliant safeguards.
+
+## AI boundary
+
+```text
+Feedback / Google Review
+        ↓
+ReviewDraftService / ReplyDraftService
+        ↓
+AIProvider interface
+        ↓
+Configured model provider
+        ↓
+Validated result
+```
+
+AI must not invent customer experiences, services, facts, guarantees, or claims; directly publish to Google; access Google credentials; bypass approval; or silently mutate unrelated data.
 
 ## Storage model
 
-The exact database and schema are TBD.
+PostgreSQL is the system of record for application-owned relational data.
 
-The eventual model should distinguish at minimum:
+Initial conceptual entities:
 
-- Client/business identity and configuration.
-- Services offered by a client.
-- Feedback submissions.
-- AI-generated drafts and generation metadata where retention is required.
-- External integration configuration and authorization metadata.
+```text
+User
+Tenant
+TenantMembership
+Service
+FeedbackSubmission
+FeedbackService
+ReviewDraft
+GoogleConnection
+GoogleLocation
+GoogleReview
+GoogleReviewReply
+AIGeneration
+AuditLog
+```
 
-Secrets and access tokens must never be stored as ordinary application data or committed to source control.
+Google-provided content must be stored only as permitted by current Google Business Profile policies and applicable privacy requirements. Google-sourced data must be distinguishable from our own operational metadata. The design must not assume indefinite retention is allowed.
 
-## Auth and access model
+Secrets, OAuth tokens, API keys, and credentials must never be committed to source control or exposed to client-side code.
 
-Public customer submission should require only the minimum identity information necessary for the approved flow.
+## Authentication and authorization
 
-Administrative and client-management operations must be authenticated and authorized.
+Private/admin operations require authentication. Tenant authorization is enforced separately from authentication.
 
-The system must enforce client ownership boundaries so one client cannot access another client's data.
+Initial roles:
 
-Exact roles and authentication provider are TBD.
+- `OWNER` — full tenant administration and integration/automation configuration.
+- `ADMIN` — services, feedback, reviews, and permitted tenant settings.
+- `STAFF` — limited operational access according to tenant permissions.
 
-## Product invariants
+The exact authentication provider configuration is deferred to Foundation and must not change domain ownership rules.
 
-- Customer feedback remains distinguishable from an AI-generated draft.
-- AI must not invent services, experiences, facts, or claims supplied by the customer.
-- Customers retain control over whether to publish a review.
-- Service catalog data is not duplicated across UI conditionals.
-- External integrations cannot bypass authorization and ownership checks.
-- No secret belongs in client-side code or source control.
-- Feature work must not silently change global architecture.
+## Public feedback links
 
-## Open architecture decisions
+Public links use tenant-scoped opaque identifiers, for example `/r/<public-token>`. A public token grants access only to the intended feedback experience and never administrative access.
 
-1. Frontend/framework.
-2. Backend strategy.
-3. Database.
-4. Authentication and admin roles.
-5. AI provider and model-routing strategy.
-6. Deployment platform.
-7. Single-client first versus multi-tenant from the beginning.
-8. Whether the rating is one overall rating or one rating per selected service.
-9. Exact Google Business Profile API capabilities and permissions required.
-10. Data retention and privacy requirements.
+Public endpoints require input validation, abuse/rate controls where appropriate, request-size limits, and safe errors.
 
-Until these are decided, agents must mark dependent work as blocked instead of guessing.
+## Security invariants
+
+1. Tenant-owned data never crosses tenant boundaries.
+2. Private operations require authentication.
+3. Authorization is enforced server-side.
+4. Secrets and OAuth credentials never reach the browser or AI provider.
+5. External actions require explicit authorization and ownership context.
+6. Public inputs are treated as untrusted.
+7. AI output is untrusted generated content and is validated before use.
+8. No review-gating or deceptive review behavior.
+9. Customers retain control over whether/how they publish generated reviews.
+10. Google data usage follows current official policy.
+
+## Reliability invariants
+
+1. Google outages do not make core feedback unusable.
+2. External failures are explicit and never silently treated as success.
+3. Retryable work is idempotent where possible.
+4. External calls use bounded timeouts, appropriate retry/backoff, and rate-limit handling.
+5. Important external actions are auditable.
+
+## Deferred decisions
+
+The following are intentionally implementation-level decisions and must be recorded here when needed:
+
+- Exact production authentication provider configuration.
+- Exact AI provider/model and pricing strategy.
+- Exact queue/worker provider.
+- Exact observability provider.
+- Exact hosting/database vendor.
+- Production Google OAuth credentials and API-access approval.
+- Final visual token values.
+
+Do not invent durable architecture for these deferred decisions.
