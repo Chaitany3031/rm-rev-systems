@@ -2,105 +2,51 @@
 
 ## Current phase
 
-Phase 0 — Product and engineering foundation
+Phase 1 — Core features and integration
 
 ## Current goal
 
-Feature 04 — Google Business Profile Connection completed and verified.
+Feature 06 — AI-Assisted Google Review Reply Draft
 
 ## Completed
 
-- Repository initialized.
-- Accidental `v1` / `v2` structure removed; root-level structure is canonical.
-- Root-level AI workflow structure established.
-- Product overview documented.
-- UI principles documented.
-- Code standards documented.
-- AI workflow rules documented.
-- Google Business Profile capabilities researched against official documentation.
-- Baseline architecture locked as a modular, multi-tenant monolith.
-- Customer feedback and Google review-management boundaries defined.
-- Feature 01 specification written and reviewed.
-- Feature 02 specification written and reviewed (`context/feature-specs/02-public-feedback.md`).
-- Feature 03 specification written and reviewed (`context/feature-specs/03-ai-review-draft.md`).
-- **Feature 01 — Foundation completed and verified (2026-09-16)**:
-  - Next.js 16 (App Router) + TypeScript + Tailwind CSS v4 foundation scaffolded.
-  - shadcn/ui primitive conventions created (`Button`, `Card`, `Input`, `Label`, `Badge`).
-  - Modular domain stubs established (`tenants`, `services`, `feedback`, `reviews`, `ai`, `google`, `auth`, `audit`).
-  - PostgreSQL + Prisma ORM configured with multi-tenant base models (`User`, `Tenant`, `TenantMembership`, `AuditLog`) and seed stub.
-  - Typed and validated server-side environment configuration via Zod (`lib/env/index.ts`).
-  - Centralized error classes with `AppError` hierarchy and safe logging helpers (`lib/errors/index.ts`).
-  - Reusable boundary validation utilities with Zod (`lib/validation/index.ts`).
-  - Shared utility functions (`lib/utils/index.ts`, `lib/utils/cn.ts`).
-  - Automated unit testing configured via Vitest (`tests/foundation.test.ts` — 17 unit tests passing).
-  - Production build tested and passing via Next.js Turbopack compiler.
-  - Full developer workflow scripts configured: `lint`, `type-check`, `test`, `build`, `db:generate`, `db:migrate`, `db:seed`.
-  - Comprehensive `README.md` and `.env.example` created.
-- **Feature 02 — Public Customer Feedback Experience completed and verified (2026-09-16)**:
-  - Extended Prisma schema with multi-tenant models: `Service`, `FeedbackSubmission`, and `FeedbackService` (preserving historical snapshots of service names).
-  - Configured Prisma seed with RM Solution development tenant (`slug: rm-solution`, `publicToken: rm-solution-dev`) and 9 active catalog services.
-  - Implemented domain services with strict tenant isolation:
-    - `domains/tenants`: `getTenantByPublicToken` (opaque public token resolution).
-    - `domains/services`: `getActiveServicesForTenant` (active service catalog retrieval).
-    - `domains/feedback`: Constants, types, Zod boundary validation schemas (`feedbackSubmissionSchema`), and core submission engine (`submitFeedback`).
-  - Implemented public feedback user experience (`/feedback/[publicToken]`):
-    - Server Component route with dynamic metadata and safe error/not-found/empty states.
-    - Mobile-first, responsive, accessible `FeedbackForm` Client Component:
-      - Accessible multi-select service cards with non-color-only checked states.
-      - Accessible 1–5 star rating radiogroup with text badge labels and keyboard navigation.
-      - Optional written feedback textarea with live character counter.
-      - Client & server validation error handling with field-level and form-level alerts.
-      - Safe submission via Server Action (`submitFeedbackAction`).
-      - Dedicated success state confirming receipt without automatic review publication or manipulative prompts.
-  - Added comprehensive test suite (`tests/public-feedback.test.ts` — 25 tests, total 42 tests passing across suite).
-  - Verified 100% clean passes on `lint`, `type-check`, `test`, `build`, and `db:generate`.
-- **Feature 03 — AI-Assisted Review Draft Generation completed, hardened, and verified (2026-09-16)**:
-  - Extended Prisma schema with persisted `ReviewDraft` model linked 1-to-1 to `FeedbackSubmission` with strict `Tenant` ownership cascading.
-  - Added Prisma migrations (`20260916000000_init` baseline and `20260916095531_add_review_draft`) with migration lock file.
-  - Implemented real tenant authorization pipeline: `publicToken + submissionId` -> resolve tenant -> load submission scoped strictly to `tenant.id` -> persist draft under same tenant. Cross-tenant attacks (Tenant A token + Tenant B submission) are strictly denied at domain and server action levels.
-  - Designed provider-agnostic `AIProvider` interface (`domains/reviews/types.ts` & `domains/ai/index.ts`) ensuring domain logic is decoupled from vendor SDKs.
-  - Implemented deterministic, grounded `MockAIProvider` for local development/testing: dynamically reflects rating sentiment (1–5 stars), business name, selected services, and customer feedback without universal positive bias or hallucinated facts.
-  - Defined isolated, non-manipulative review drafting system prompt (`domains/ai/prompts/review-draft.ts`) strictly enforcing first-person customer voice without hallucinated facts.
-  - Created domain service `generateReviewDraft` (`domains/reviews/service.ts`) with:
-    - Structured input preparation based solely on verified feedback and active service snapshot records.
-    - Strict boundary and output length validation (1–1000 characters).
-    - Dedicated persistence in `ReviewDraft` keeping original customer feedback immutable.
-    - Safe error handling wrapping provider failures in `ExternalServiceError` without corrupting state.
-  - Implemented server action `generateReviewDraftAction` (`app/feedback/[publicToken]/actions.ts`) preserving public token context with safe, sanitized error responses preventing credential/stack trace leakage.
-  - Extended customer-facing UI (`app/feedback/[publicToken]/feedback-form.tsx`):
-    - Multi-stage feedback submission into editable AI review draft workflow.
-    - Distinct loading/generating indicator, editable draft textarea, error banner with retry option, and one-click copy to clipboard with 3-second visual confirmation.
-    - Explicit AI-generation callout informing customers they have full control to edit or discard.
-  - Added comprehensive test suite (`tests/ai-review-draft.test.ts` — 31 tests, total 73 tests passing across entire suite, covering cross-tenant rejection, invalid public tokens, provider failure, rating variations, and immutability).
-  - Verified 100% clean passes on `lint`, `type-check`, `test`, `build`, and `db:generate`.
-- **Feature 04 — Google Business Profile Connection completed and verified (2026-09-16)**:
-  - Extended Prisma schema with `GoogleConnection` model (1-to-1 with `Tenant`, cascade on delete) and generated migration `prisma/migrations/20260916120000_add_google_connection/migration.sql`.
-  - Implemented token encryption at rest via AES-256-GCM (`domains/google/crypto.ts`) with tamper detection and safe decryption error wrapping.
-  - Implemented HMAC-SHA256 signed OAuth state lifecycle (`domains/google/oauth/state.ts`) with expiration checks and tenant binding to prevent CSRF and cross-tenant callback injections.
-  - Implemented provider-agnostic `GoogleBusinessProfileProvider` abstraction (`domains/google/business-profile/provider.ts` and `domains/google/provider.ts`) supporting live Google OAuth/API and deterministic mock provider with configurable failure/empty scenarios.
-  - Implemented Google domain service operations with strict tenant isolation (`domains/google/business-profile/service.ts`):
-    - `initiateGoogleConnection`: Generates signed state and official Google OAuth authorization URL.
-    - `processOAuthCallback`: Validates signed state, exchanges authorization code, discovers accounts and locations, securely encrypts credentials at rest, and persists connection.
-    - `selectGoogleLocation`: Associates specific business location with tenant connection.
-    - `getGoogleConnectionForTenant`: Returns sanitized `GoogleConnectionPublicInfo` (strictly omitting internal tokens and ciphertext).
-    - `disconnectGoogleConnection`: Clears encrypted credentials, marks status `DISCONNECTED`, and performs best-effort provider token revocation.
-  - Created authentication authorization boundary (`domains/auth/`) to prevent unprivileged public token callers from accessing administrative connection actions.
-  - Created OAuth callback Route Handler (`app/api/google/oauth/callback/route.ts`) with safe error redirection and state validation.
-  - Created Server Actions (`app/admin/google/actions.ts`) with robust authorization and sanitized error reporting.
-  - Built administrative management UI (`app/admin/google/page.tsx` and `app/admin/google/google-connection-client.tsx`) supporting connection initiation, status badges, location details, disconnect confirmation, and error/success alerts.
-  - Added comprehensive automated test suite (`tests/google-connection.test.ts` — 42 tests covering encryption, OAuth state, provider mock/HTTP URL, domain services, tenant isolation, server actions, and Zod schemas).
-  - Total test suite: 115 tests passing across 4 test suites (`tests/foundation.test.ts`, `tests/public-feedback.test.ts`, `tests/ai-review-draft.test.ts`, `tests/google-connection.test.ts`).
-  - Verified 100% clean passes on `npm run test`, `npm run lint`, and `npm run build`.
+- **Feature 01 — Foundation** completed and verified.
+- **Feature 02 — Public Customer Feedback Experience** completed and verified.
+- **Feature 03 — AI-Assisted Review Draft Generation** completed, hardened, and verified.
+- **Feature 04 — Google Business Profile Connection** completed and verified.
+- **Feature 05 — Google Business Profile Review Sync & Inbox** completed and verified.
+- Security hardening added to Feature 05 (requireTenantAdmin on server actions and admin page).
 
 ## In progress
 
-None.
+None — Feature 06 security fixes completed 2026-09-16.
 
 ## Next up
 
-1. Feature 06 — AI Reply Draft (or next roadmap feature).
+1. Feature 07 — Approval workflow (deferred — explicitly out of scope for Feature 06)
+2. Feature 08 — Publication automation (deferred — explicitly out of scope for Feature 06)
 
 ## Recently completed
+
+- **Feature 06 — Security Hardening** (2026-09-16):
+  - **Critical security fix**: All four server actions in `reply-actions.ts` were passing `googleReviewId` or `draftId` to `requireTenantAdmin()`, which expects a tenant identifier. This caused runtime authorization failures.
+  - **Pattern adopted from Feature 04/05**: Server actions now accept `tenantId` from client, authenticate with `requireTenantAdmin(tenantId)`, then use ONLY the authenticated `admin.tenantId` for all domain service calls—never the browser-supplied value.
+  - **Fixed actions**: `generateReplyDraftAction`, `editReplyDraftAction`, `regenerateReplyDraftAction`, `fetchReplyDraftAction` — all now follow the secure Feature 04/05 pattern.
+  - **UI updates**: `reviews-inbox-client.tsx` now passes `tenantId` (from props) to all reply action calls. Removed `tenantId` from `ReplyDraftPanelProps` (server-only concern). Fixed save button state to use dedicated `isSaving` flag instead of `isGenerating`.
+  - **Minor fixes**: Fixed typo in `reply-service.ts` docstring ("***" → "must").
+  - **New test suite**: `tests/reply-actions-authorization.test.ts` (40 tests) — verifies all four actions reject unauthenticated/public-token requests, use authenticated tenant ID (not browser-supplied), enforce cross-tenant isolation, and handle missing reviews/drafts correctly.
+  - **Verification**: All 194 tests pass (8 test suites). Lint, type-check, build, and Prisma generate all succeed.
+
+- **Feature 06 — AI-Assisted Google Review Reply Draft** (implemented 2026-09-16):
+  - Strictly AI reply DRAFT generation/editing only. No Google reply publishing, approval workflow, automatic replies, Pub/Sub, queues, cron, or workers.
+  - Added `ReviewReplyDraft` Prisma model (unique constraint on tenantId+googleReviewId → one current draft per review), with cascade relations to `Tenant` and `GoogleReview`.
+  - Created database migration `20260916130000_add_review_reply_draft` matching the schema.
+  - Extended `AIProvider` interface with `generateReplyDraft()`; added the `generateReplyDraft` method to the mock provider and a deterministic, grounded reply prompt (`domains/ai/prompts/review-reply.ts`).
+  - Built `domains/reviews/reply-service.ts` with `generateReplyDraft`, `regenerateReplyDraft`, `updateReplyDraft`, and `getReplyDraft` — all tenant-scoped via the authenticated `requireTenantAdmin()` boundary. Review loads use strict (id, tenantId) filters; draft writes store the authenticated tenantId. AI output is validated (non-empty, ≤1000 chars) and wrapped as `ExternalServiceError` on provider failure.
+  - Added `domains/reviews/reply-validation.ts` (request, output, input, and update schemas) and `domains/reviews/reply-service.ts`.
+  - Added server actions (`app/admin/google/reviews/reply-actions.ts`) and an AI Reply Draft panel in the reviews inbox UI (`reviews-inbox-client.tsx`) with generate/edit/regenerate and existing-draft loading.
+  - Created `tests/ai-reply-draft.test.ts` (34 tests) covering validation, tenant isolation, cross-tenant denial, authorization, draft persistence scoping, AI output validation, and mock reply grounding (no hallucinated facts).
+  - Total test suite: 177 tests passing across 7 test suites. `npm run lint` (0 errors/0 warnings), `npm run type-check`, and `npm run build` all pass. Prisma generate succeeds. Migration file validated against schema (database not reachable offline; `prisma validate` requires DATABASE_URL).
 
 - **Feature 05 — Google Business Profile Review Sync & Inbox** (completed 2026-09-16):
   - Implemented GoogleReview Prisma model with tenant isolation and idempotent sync support via unique constraint on (tenantId + googleReviewName).

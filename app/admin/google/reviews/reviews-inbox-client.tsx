@@ -1,7 +1,13 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { triggerReviewSync, fetchTenantReviews } from "../reviews-actions";
+import {
+  generateReplyDraftAction,
+  editReplyDraftAction,
+  regenerateReplyDraftAction,
+  fetchReplyDraftAction,
+} from "./reply-actions";
 import type { GoogleReview } from "@prisma/client";
 
 interface ReviewsInboxClientProps {
@@ -20,6 +26,244 @@ interface SyncResult {
   error?: string;
 }
 
+/**
+ * Reply draft panel for a single Google review.
+ * The `tenantId` prop is passed only to server actions for authentication;
+ * it is never used as a trust boundary for authorization.
+ */
+interface ReplyDraftPanelProps {
+  tenantId: string;
+  review: GoogleReview;
+  onDraftUpdated?: () => void;
+}
+
+function ReplyDraftPanel({ tenantId, review, onDraftUpdated }: ReplyDraftPanelProps) {
+  const [draft, setDraft] = useState<string>("");
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [editContent, setEditContent] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // Fetch an existing draft (if any) when the panel mounts. All setState calls
+  // run inside promise callbacks (not synchronously in the effect body), keeping
+  // this compliant with react-hooks/set-state-in-effect.
+  useEffect(() => {
+    let cancelled = false;
+    fetchReplyDraftAction(tenantId, review.id).then(
+      (result) => {
+        if (cancelled) return;
+        if (result.success) {
+          setDraft(result.data.content);
+          setDraftId(result.data.id);
+        } else {
+          setDraft("");
+          setDraftId(null);
+        }
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load draft");
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, review.id]);
+
+  // Generate a new AI reply draft
+  const handleGenerate = async () => {
+    setIsGenerating(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const result = await generateReplyDraftAction(tenantId, review.id);
+      if (result.success) {
+        setDraft(result.data.content);
+        setDraftId(result.data.id);
+        setSuccessMessage("AI reply draft generated successfully.");
+        onDraftUpdated?.();
+      } else {
+        setError(result.message || "Failed to generate draft");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate draft");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // Regenerate the AI reply draft
+  const handleRegenerate = async () => {
+    setIsRegenerating(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const result = await regenerateReplyDraftAction(tenantId, review.id);
+      if (result.success) {
+        setDraft(result.data.content);
+        setDraftId(result.data.id);
+        setSuccessMessage("AI reply draft regenerated successfully.");
+        onDraftUpdated?.();
+      } else {
+        setError(result.message || "Failed to regenerate draft");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to regenerate draft");
+    } finally {
+      setIsRegenerating(false);
+    }
+  };
+
+  // Save edited draft
+  const handleSaveEdit = async () => {
+    if (!draftId) return;
+    setIsSaving(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const result = await editReplyDraftAction(tenantId, draftId, editContent);
+      if (result.success) {
+        setDraft(result.data.content);
+        setSuccessMessage("Reply draft updated successfully.");
+        onDraftUpdated?.();
+      } else {
+        setError(result.message || "Failed to update draft");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update draft");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Start editing
+  const startEditing = () => {
+    setEditContent(draft);
+    setIsEditing(true);
+    setSuccessMessage(null);
+  };
+
+  // Cancel editing
+  const cancelEditing = () => {
+    setIsEditing(false);
+    setEditContent("");
+    setError(null);
+  };
+
+  return (
+    <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
+      <h4 className="text-sm font-medium text-gray-900 mb-3">AI Reply Draft</h4>
+
+      {error && (
+        <div className="mb-3 rounded-md bg-red-50 p-3">
+          <p className="text-sm text-red-700">{error}</p>
+        </div>
+      )}
+
+      {successMessage && (
+        <div className="mb-3 rounded-md bg-green-50 p-3">
+          <p className="text-sm text-green-700">{successMessage}</p>
+        </div>
+      )}
+
+      {/* Draft content / editor */}
+      <>
+          {isEditing ? (
+            <div className="space-y-3">
+              <textarea
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                rows={6}
+                placeholder="Edit your reply draft..."
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={handleSaveEdit}
+                  disabled={isSaving || !editContent.trim()}
+                  className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
+                >
+                  {isSaving ? "Saving..." : "Save"}
+                </button>
+                <button
+                  onClick={cancelEditing}
+                  disabled={isSaving}
+                  className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="min-h-[60px] rounded-md border border-gray-200 bg-white p-3">
+                {draft ? (
+                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{draft}</p>
+                ) : (
+                  <p className="text-sm text-gray-400 italic">No draft generated yet</p>
+                )}
+              </div>
+
+              {/* Actions */}
+              <div className="flex flex-wrap gap-2">
+                {!draft ? (
+                  <button
+                    onClick={handleGenerate}
+                    disabled={isGenerating || isRegenerating}
+                    className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {isGenerating ? (
+                      <>
+                        <svg className="animate-spin -ml-1 mr-2 h-3 w-3 text-white" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Generating...
+                      </>
+                    ) : (
+                      "Generate AI Reply"
+                    )}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={startEditing}
+                      disabled={isEditing}
+                      className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={handleRegenerate}
+                      disabled={isGenerating || isRegenerating}
+                      className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      {isRegenerating ? (
+                        <>
+                          <svg className="animate-spin -ml-1 mr-2 h-3 w-3 text-gray-600" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                          Regenerating...
+                        </>
+                      ) : (
+                        "Regenerate"
+                      )}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </>
+    </div>
+  );
+}
+
 export function ReviewsInboxClient({
   tenantId,
   initialReviews,
@@ -35,6 +279,7 @@ export function ReviewsInboxClient({
   const [currentOffset, setCurrentOffset] = useState(offset);
   const [currentTotal, setCurrentTotal] = useState(total);
   const [filterRating, setFilterRating] = useState<number | "all">("all");
+  const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null);
 
   // Fetch reviews with pagination
   const loadReviews = useCallback(
@@ -72,7 +317,6 @@ export function ReviewsInboxClient({
       const result = await triggerReviewSync(tenantId);
       if (result.success) {
         setSyncResult(result.data);
-        // Refresh the reviews list
         await loadReviews(0);
       } else {
         setError(result.message || "Sync failed");
@@ -120,6 +364,9 @@ export function ReviewsInboxClient({
     return <span className="text-yellow-500">{stars}</span>;
   };
 
+  // Find selected review
+  const selectedReview = reviews.find((r) => r.id === selectedReviewId) || null;
+
   return (
     <div className="space-y-6">
       {/* Header with sync button */}
@@ -156,7 +403,7 @@ export function ReviewsInboxClient({
             <div className="flex-shrink-0">
               {syncResult.error ? (
                 <svg className="h-5 w-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293 1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
                 </svg>
               ) : (
                 <svg className="h-5 w-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
@@ -190,7 +437,7 @@ export function ReviewsInboxClient({
           <div className="flex">
             <div className="flex-shrink-0">
               <svg className="h-5 w-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293 1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
               </svg>
             </div>
             <div className="ml-3">
@@ -247,12 +494,15 @@ export function ReviewsInboxClient({
                 <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Status
                 </th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  AI Reply
+                </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {isLoading ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                  <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
                     <svg className="animate-spin mx-auto h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
@@ -262,7 +512,7 @@ export function ReviewsInboxClient({
                 </tr>
               ) : filteredReviews.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                  <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
                     <p>No reviews found</p>
                   </td>
                 </tr>
@@ -298,6 +548,16 @@ export function ReviewsInboxClient({
                           Pending
                         </span>
                       )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <button
+                        onClick={() =>
+                          setSelectedReviewId(selectedReviewId === review.id ? null : review.id)
+                        }
+                        className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 hover:bg-purple-200"
+                      >
+                        {selectedReviewId === review.id ? "Close" : "AI Reply"}
+                      </button>
                     </td>
                   </tr>
                 ))
@@ -351,7 +611,7 @@ export function ReviewsInboxClient({
                 >
                   <span className="sr-only">Next</span>
                   <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                    <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 001.414 0l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
                   </svg>
                 </button>
               </nav>
@@ -359,6 +619,17 @@ export function ReviewsInboxClient({
           </div>
         </div>
       </div>
+
+      {/* AI Reply Draft Panel */}
+      {selectedReview && (
+        <ReplyDraftPanel
+          tenantId={tenantId}
+          review={selectedReview}
+          onDraftUpdated={() => {
+            // Refresh reviews list if needed
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { getEnvConfig } from "@/lib/env";
-import type { AIProvider, ReviewDraftInput, ReviewDraftOutput } from "../reviews/types";
+import type { AIProvider, ReviewDraftInput, ReviewDraftOutput, ReplyDraftInput, ReplyDraftOutput } from "../reviews/types";
 import { log } from "@/lib/errors";
 
 function formatServicesList(serviceNames: string[]): string {
@@ -21,7 +21,7 @@ function formatServicesList(serviceNames: string[]): string {
  * - Never hallucinates unprovided facts, names, dates, or prices
  * - Never returns a universal positive 5-star review for low ratings
  */
-export function buildDeterministicMockDraft(input: ReviewDraftInput): string {
+function buildDeterministicMockDraft(input: ReviewDraftInput): string {
   const { businessName, serviceNames, overallRating, customerFeedback } = input;
   const servicesText = formatServicesList(serviceNames);
   const trimmedFeedback = customerFeedback?.trim() ?? "";
@@ -46,10 +46,56 @@ export function buildDeterministicMockDraft(input: ReviewDraftInput): string {
   return baseReview;
 }
 
+/**
+ * Deterministic mock reply draft generator for development and testing.
+ * Grounded strictly in the supplied Google review data without hallucinating facts.
+ *
+ * Rules:
+ * - Uses business perspective ("Thank you", "We appreciate")
+ * - Uses supplied review data only: reviewer name, rating, comment, existing reply
+ * - Never invents products, services, prices, employees, locations, timelines
+ * - Adjusts tone to match the rating (1-5 stars)
+ * - For positive reviews: simple genuine thank-you
+ * - For negative reviews: acknowledge without arguing or inventing corrective actions
+ * - For reviews without comments: remain generic and appropriate
+ */
+function buildDeterministicMockReply(reviewData: ReplyDraftInput): string {
+  const { reviewerDisplayName, starRating, comment, replyComment } = reviewData;
+  const reviewerName = reviewerDisplayName?.trim() ?? "the customer";
+  const trimmedComment = comment?.trim() ?? "";
+  const hasExistingReply = Boolean(replyComment?.trim());
+
+  let baseReply = "";
+
+  if (starRating !== undefined && starRating >= 5) {
+    baseReply = `Thank you so much for your kind words, ${reviewerName}. We're thrilled you had a great experience!`;
+  } else if (starRating !== undefined && starRating === 4) {
+    baseReply = `Thank you for your positive feedback, ${reviewerName}. We're glad you enjoyed your experience with us!`;
+  } else if (starRating !== undefined && starRating === 3) {
+    baseReply = `Thank you for your feedback, ${reviewerName}. We appreciate you taking the time to share your thoughts, and we'll continue working to improve.`;
+  } else if (starRating !== undefined && starRating === 2) {
+    baseReply = `Thank you for sharing your feedback, ${reviewerName}. We appreciate your honest assessment and are committed to enhancing our service.`;
+  } else if (starRating !== undefined && starRating === 1) {
+    baseReply = `Thank you for bringing this to our attention, ${reviewerName}. We take all feedback seriously and are working to improve.`;
+  } else {
+    baseReply = `Thank you for your review, ${reviewerName}. We appreciate your feedback and are committed to providing a great experience.`;
+  }
+
+  if (trimmedComment.length > 0) {
+    return `${baseReply} ${trimmedComment}`;
+  }
+
+  if (hasExistingReply) {
+    return `${baseReply} We see you've had previous engagement with our team.`;
+  }
+
+  return baseReply;
+}
+
 class MockAIProvider implements AIProvider {
   async generateReviewDraft(input: ReviewDraftInput): Promise<ReviewDraftOutput> {
     // Simulate generation delay in non-test environments
-    if (process.env.NODE_ENV !== "test") {
+    if (typeof process !== "undefined" && process.env?.NODE_ENV !== "test") {
       await new Promise((resolve) => setTimeout(resolve, 800));
     }
 
@@ -67,6 +113,27 @@ class MockAIProvider implements AIProvider {
       draft,
     };
   }
+
+  async generateReplyDraft(input: ReplyDraftInput): Promise<ReplyDraftOutput> {
+    // Simulate generation delay in non-test environments
+    if (typeof process !== "undefined" && process.env?.NODE_ENV !== "test") {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    }
+
+    log("info", "Mock AI provider executed for reply draft", {
+      provider: "mock",
+      hasReviewerName: Boolean(input.reviewerDisplayName?.trim()),
+      rating: input.starRating,
+      hasComment: Boolean(input.comment?.trim()),
+      hasExistingReply: Boolean(input.replyComment?.trim()),
+    });
+
+    const content = buildDeterministicMockReply(input);
+
+    return {
+      content,
+    };
+  }
 }
 
 /**
@@ -81,3 +148,5 @@ export function getAIProvider(): AIProvider {
       throw new Error(`Unsupported AI_PROVIDER: ${config.AI_PROVIDER}`);
   }
 }
+
+export { buildDeterministicMockDraft, buildDeterministicMockReply };

@@ -32,6 +32,7 @@ model Tenant {
   services            Service[]
   feedbackSubmissions FeedbackSubmission[]
   reviewDrafts        ReviewDraft[]
+  reviewReplyDrafts   ReviewReplyDraft[]
   googleConnection    GoogleConnection?
   googleReviews       GoogleReview[]
 }
@@ -132,6 +133,27 @@ model ReviewDraft {
   @@index([tenantId])
 }
 
+/// AI-generated reply draft for a Google review.
+/// A single current draft per (tenant, googleReview) pair.
+/// The draft is separate from GoogleReview.replyComment and
+/// must never be published by Feature 06.
+model ReviewReplyDraft {
+  id                String             @id @default(cuid())
+  tenantId          String
+  googleReviewId    String
+  content           String
+  provider          String?
+  model             String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  tenant           Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  googleReview     GoogleReview       @relation(fields: [googleReviewId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, googleReviewId])
+  @@index([tenantId])
+}
+
 /// Google Business Profile connection for a tenant.
 /// Persists OAuth connection status, authorized Google account and location identifiers,
 /// location metadata for display, and securely encrypted OAuth credentials.
@@ -185,8 +207,9 @@ model GoogleReview {
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
-  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  googleConnection GoogleConnection @relation(fields: [googleConnectionId], references: [id], onDelete: Cascade)
+  tenant           Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  googleConnection GoogleConnection   @relation(fields: [googleConnectionId], references: [id], onDelete: Cascade)
+  replyDrafts      ReviewReplyDraft[]
 
   @@unique([tenantId, googleReviewName])
   @@index([tenantId, googleConnectionId, reviewUpdateTime])
