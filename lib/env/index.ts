@@ -33,11 +33,34 @@ export const envSchema = z.object({
   AI_MOCK_DRAFT: z
     .string()
     .optional(),
+
+  // Google Business Profile Integration (Feature 04)
+  // Provider abstraction: "mock" for local dev/testing, "google" for live Google APIs.
+  GOOGLE_PROVIDER: z
+    .enum(["mock", "google"])
+    .default("mock"),
+  GOOGLE_CLIENT_ID: z
+    .string()
+    .optional(),
+  GOOGLE_CLIENT_SECRET: z
+    .string()
+    .optional(),
+  GOOGLE_OAUTH_REDIRECT_URI: z
+    .string()
+    .url("GOOGLE_OAUTH_REDIRECT_URI must be a valid URL")
+    .optional(),
+  TOKEN_ENCRYPTION_SECRET: z
+    .string()
+    .optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
 
 let cachedConfig: EnvConfig | null = null;
+
+export function resetEnvCache(): void {
+  cachedConfig = null;
+}
 
 /**
  * Validates given input or process.env against the envSchema.

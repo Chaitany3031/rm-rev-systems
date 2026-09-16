@@ -32,6 +32,8 @@ model Tenant {
   services            Service[]
   feedbackSubmissions FeedbackSubmission[]
   reviewDrafts        ReviewDraft[]
+  googleConnection    GoogleConnection?
+  googleReviews       GoogleReview[]
 }
 
 /// Membership linking users to tenants with a role.
@@ -128,4 +130,64 @@ model ReviewDraft {
 
   @@unique([feedbackSubmissionId])
   @@index([tenantId])
+}
+
+/// Google Business Profile connection for a tenant.
+/// Persists OAuth connection status, authorized Google account and location identifiers,
+/// location metadata for display, and securely encrypted OAuth credentials.
+/// Sensitive credentials (access/refresh tokens) must be stored encrypted and never exposed.
+model GoogleConnection {
+  id                    String    @id @default(cuid())
+  tenantId              String    @unique
+  provider              String    @default("google")
+  googleAccountId       String?   /// Resource name or ID e.g. "accounts/123456"
+  googleAccountName     String?   /// Display name of Google Account
+  googleLocationId      String?   /// Resource name or ID e.g. "locations/789012"
+  googleLocationName    String?   /// Full resource name e.g. "accounts/123/locations/789"
+  locationTitle         String?   /// Business name of the selected location
+  locationAddress       String?   /// Formatted storefront address
+  status                String    @default("CONNECTED") /// CONNECTED | DISCONNECTED | ERROR
+  errorMessage          String?   /// Sanitized error description if in ERROR status
+  scope                 String?   /// Authorized OAuth scopes
+  encryptedAccessToken  String?   /// AES-256-GCM encrypted access token
+  encryptedRefreshToken String?   /// AES-256-GCM encrypted refresh token
+  tokenExpiresAt        DateTime? /// Expiration time for access token
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  googleReviews GoogleReview[]
+
+  @@index([tenantId, status])
+}
+
+/// Google Business Profile review synchronized from Google's Review API.
+/// Stores a normalized snapshot of review data for tenant-scoped review inbox.
+/// The stable identity is (tenantId + googleReviewName) to support idempotent synchronization.
+/// Reviews are updated (not duplicated) on repeated synchronization.
+model GoogleReview {
+  id                  String    @id @default(cuid())
+  tenantId            String
+  googleConnectionId  String
+  googleReviewName    String    /// Stable Google review resource name e.g. "accounts/123/locations/456/reviews/789"
+  googleLocationName  String    /// Google location resource name
+  reviewerDisplayName String?   /// Reviewer's display name (if available)
+  starRating          Int?      /// 1-5 star rating
+  comment             String?   @db.Text /// Review comment text
+  reviewCreateTime    DateTime? /// When the review was originally created on Google
+  reviewUpdateTime    DateTime? /// When the review was last updated on Google
+  replyComment        String?   @db.Text /// Existing reply text (if merchant already replied)
+  replyUpdateTime     DateTime? /// When the reply was last updated
+  reviewReplyUrl      String?   /// URL to reply to this review on Google
+  replyState          String?   /// Current reply state from Google
+  policyViolationCode String?   /// Policy violation code if flagged by Google
+  syncedAt            DateTime  @default(now()) /// Last synchronization timestamp
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  googleConnection GoogleConnection @relation(fields: [googleConnectionId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, googleReviewName])
+  @@index([tenantId, googleConnectionId, reviewUpdateTime])
 }
