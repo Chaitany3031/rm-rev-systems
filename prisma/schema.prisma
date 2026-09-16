@@ -31,6 +31,7 @@ model Tenant {
   auditLogs           AuditLog[]
   services            Service[]
   feedbackSubmissions FeedbackSubmission[]
+  reviewDrafts        ReviewDraft[]
 }
 
 /// Membership linking users to tenants with a role.
@@ -89,6 +90,7 @@ model FeedbackSubmission {
 
   tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   selectedServices FeedbackService[]
+  reviewDrafts     ReviewDraft[]
 
   @@index([tenantId])
 }
@@ -107,4 +109,23 @@ model FeedbackService {
 
   @@unique([feedbackSubmissionId, serviceId])
   @@index([serviceId])
+}
+
+/// AI-generated review draft derived from a customer feedback submission.
+/// The draft is always the latest generated draft for its submission. It deliberately
+/// keeps the original `FeedbackSubmission.feedback` unchanged and stores the editable
+/// AI-generated text separately. Editing the draft in the UI mutates this record only.
+model ReviewDraft {
+  id                   String             @id @default(cuid())
+  tenantId             String
+  feedbackSubmissionId String
+  draft                String
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  feedbackSubmission FeedbackSubmission @relation(fields: [feedbackSubmissionId], references: [id], onDelete: Cascade)
+
+  @@unique([feedbackSubmissionId])
+  @@index([tenantId])
 }

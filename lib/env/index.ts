@@ -23,6 +23,18 @@ export const envSchema = z.object({
     .string()
     .url("NEXT_PUBLIC_APP_URL must be a valid URL")
     .optional(),
+
+  // AI review-draft generation (Feature 03)
+  // Provider-agnostic: the app-level AIProvider abstraction consumes these so the
+  // exact vendor/model can be swapped via configuration without code changes.
+  AI_PROVIDER: z
+    .literal("mock")
+    .default("mock"),
+  AI_MOCK_DRAFT: z
+    .string()
+    .default(
+      "I recently used RM Solution and was impressed by the quality of their work. The team was professional and delivered exactly what I needed. I would definitely recommend them to others looking for reliable business solutions."
+    ),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

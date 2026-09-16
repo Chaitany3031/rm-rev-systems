@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useTransition } from "react";
+import React, { useState, useTransition, useEffect } from "react";
 import type { PublicServiceInfo } from "@/domains/services";
-import { submitFeedbackAction } from "./actions";
+import { submitFeedbackAction, generateReviewDraftAction } from "./actions";
 import { FEEDBACK_MAX_LENGTH } from "@/domains/feedback";
+import { DRAFT_MAX_LENGTH } from "@/domains/reviews/validation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -26,14 +27,27 @@ const RATING_LABELS: Record<number, { label: string; description: string }> = {
 };
 
 export function FeedbackForm({ publicToken, tenantName, services }: FeedbackFormProps) {
+  // Form submission state
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [rating, setRating] = useState<number | null>(null);
   const [hoveredRating, setHoveredRating] = useState<number | null>(null);
   const [feedbackText, setFeedbackText] = useState("");
-  const [isPending, startTransition] = useTransition();
-
+  const [isSubmitting, startSubmitTransition] = useTransition();
   const [errors, setErrors] = useState<Record<string, string[]>>({});
-  const [submittedSuccess, setSubmittedSuccess] = useState(false);
+
+  // Post-submission review-draft state
+  const [submissionId, setSubmissionId] = useState<string | null>(null);
+  const [reviewDraft, setReviewDraft] = useState<string>("");
+  const [isGeneratingDraft, startDraftTransition] = useTransition();
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Clear copied notification after 3 seconds
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 3000);
+    return () => clearTimeout(timer);
+  }, [copied]);
 
   const toggleService = (serviceId: string) => {
     setSelectedServiceIds((prev) => {
@@ -86,7 +100,7 @@ export function FeedbackForm({ publicToken, tenantName, services }: FeedbackForm
 
     setErrors({});
 
-    startTransition(async () => {
+    startSubmitTransition(async () => {
       const res = await submitFeedbackAction({
         publicToken,
         rating: rating!,
@@ -95,12 +109,49 @@ export function FeedbackForm({ publicToken, tenantName, services }: FeedbackForm
       });
 
       if (res.success) {
-        setSubmittedSuccess(true);
+        setSubmissionId(res.data.submissionId);
+        // Automatically start generating AI review draft
+        triggerGenerateDraft(res.data.submissionId);
       } else {
         const errorMessage = res.message ?? "Failed to submit feedback.";
         setErrors(res.errors ?? { form: [errorMessage] });
       }
     });
+  };
+
+  const triggerGenerateDraft = (id: string) => {
+    setDraftError(null);
+    startDraftTransition(async () => {
+      const res = await generateReviewDraftAction(id);
+      if (res.success) {
+        setReviewDraft(res.data.draft);
+      } else {
+        const msg =
+          res.message ?? "Unable to generate review draft at this time.";
+        setDraftError(msg);
+      }
+    });
+  };
+
+  const handleCopyDraft = async () => {
+    if (!reviewDraft) return;
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard) {
+        await navigator.clipboard.writeText(reviewDraft);
+        setCopied(true);
+      } else {
+        // Fallback for older browsers
+        const el = document.createElement("textarea");
+        el.value = reviewDraft;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand("copy");
+        document.body.removeChild(el);
+        setCopied(true);
+      }
+    } catch {
+      setDraftError("Failed to copy text to clipboard. Please copy manually.");
+    }
   };
 
   const handleReset = () => {
@@ -109,52 +160,252 @@ export function FeedbackForm({ publicToken, tenantName, services }: FeedbackForm
     setHoveredRating(null);
     setFeedbackText("");
     setErrors({});
-    setSubmittedSuccess(false);
+    setSubmissionId(null);
+    setReviewDraft("");
+    setDraftError(null);
+    setCopied(false);
   };
 
-  if (submittedSuccess) {
+  // POST-SUBMISSION STATE (Feature 02 Confirmation + Feature 03 AI Review Draft)
+  if (submissionId) {
     return (
-      <Card className="border-primary/20 bg-card shadow-md">
-        <CardHeader className="text-center pb-4">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400">
-            <svg
-              className="h-8 w-8"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2.5"
-                d="M5 13l4 4L19 7"
-              />
-            </svg>
-          </div>
-          <CardTitle className="text-2xl font-bold tracking-tight text-foreground">
-            Thank You for Your Feedback!
-          </CardTitle>
-          <CardDescription className="text-base text-muted-foreground mt-2">
-            Your feedback for <span className="font-semibold text-foreground">{tenantName}</span> has been successfully recorded.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6 text-center pt-2">
-          <p className="text-sm text-muted-foreground">
-            We appreciate you taking the time to help us improve our services.
-          </p>
-          <div className="pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleReset}
-              className="mx-auto"
-            >
-              Submit Another Response
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="space-y-6">
+        {/* Success Header */}
+        <Card className="border-primary/20 bg-card shadow-md">
+          <CardHeader className="text-center pb-4">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400">
+              <svg
+                className="h-8 w-8"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2.5"
+                  d="M5 13l4 4L19 7"
+                />
+              </svg>
+            </div>
+            <CardTitle className="text-2xl font-bold tracking-tight text-foreground">
+              Thank You for Your Feedback!
+            </CardTitle>
+            <CardDescription className="text-base text-muted-foreground mt-2">
+              Your feedback for <span className="font-semibold text-foreground">{tenantName}</span> has been securely recorded.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+
+        {/* Feature 03: AI Review Draft Assistant Card */}
+        <Card className="border-border shadow-sm">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg font-semibold text-foreground flex items-center gap-2">
+                <span>AI-Assisted Review Draft</span>
+                <Badge variant="secondary" className="text-xs font-normal">
+                  Editable
+                </Badge>
+              </CardTitle>
+            </div>
+            <CardDescription className="text-sm text-muted-foreground mt-1">
+              We&apos;ve drafted a customer review based on your feedback. You can edit this text freely before copying it for your own use.
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent className="space-y-4 pt-2">
+            {/* Generating Loading State */}
+            {isGeneratingDraft && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="flex flex-col items-center justify-center p-8 space-y-3 bg-muted/40 rounded-lg border border-dashed border-border"
+              >
+                <svg
+                  className="h-7 w-7 animate-spin text-primary"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  />
+                </svg>
+                <p className="text-sm font-medium text-foreground">
+                  Generating your review draft...
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Summarizing your selected services and feedback
+                </p>
+              </div>
+            )}
+
+            {/* Error State with Retry */}
+            {draftError && !isGeneratingDraft && (
+              <div
+                role="alert"
+                className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 space-y-3 text-destructive"
+              >
+                <div className="flex items-start gap-2">
+                  <svg
+                    className="h-5 w-5 shrink-0 mt-0.5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  <div className="flex-1 text-sm">
+                    <p className="font-semibold">{draftError}</p>
+                    <p className="text-xs mt-1 text-destructive/80">
+                      Your original feedback is saved and safe. You can retry draft generation below.
+                    </p>
+                  </div>
+                </div>
+                <div className="pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => triggerGenerateDraft(submissionId)}
+                    className="border-destructive/30 hover:bg-destructive/20 text-destructive cursor-pointer"
+                  >
+                    Retry Generating Draft
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Generated & Editable Draft Display */}
+            {reviewDraft && !isGeneratingDraft && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label
+                    htmlFor="ai-review-draft"
+                    className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                  >
+                    Review Draft (Click to edit)
+                  </Label>
+                  <span
+                    className={cn(
+                      "text-xs",
+                      reviewDraft.length > DRAFT_MAX_LENGTH
+                        ? "text-destructive font-semibold"
+                        : "text-muted-foreground"
+                    )}
+                    aria-live="polite"
+                  >
+                    {reviewDraft.length} / {DRAFT_MAX_LENGTH}
+                  </span>
+                </div>
+
+                <div className="relative">
+                  <Textarea
+                    id="ai-review-draft"
+                    value={reviewDraft}
+                    onChange={(e) => setReviewDraft(e.target.value)}
+                    rows={5}
+                    maxLength={DRAFT_MAX_LENGTH + 100}
+                    className="resize-y bg-background font-normal text-sm leading-relaxed border-border/80 focus-visible:ring-primary"
+                    aria-label="Editable AI-generated review draft"
+                  />
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+                  <Button
+                    type="button"
+                    onClick={handleCopyDraft}
+                    className="w-full sm:w-auto min-w-[160px] h-10 font-medium cursor-pointer"
+                  >
+                    {copied ? (
+                      <span className="flex items-center justify-center gap-1.5 text-emerald-100">
+                        <svg
+                          className="h-4 w-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth="2.5"
+                            d="M5 13l4 4L19 7"
+                          />
+                        </svg>
+                        <span>Copied to Clipboard!</span>
+                      </span>
+                    ) : (
+                      <span className="flex items-center justify-center gap-1.5">
+                        <svg
+                          className="h-4 w-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth="2"
+                            d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"
+                          />
+                        </svg>
+                        <span>Copy Review</span>
+                      </span>
+                    )}
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => triggerGenerateDraft(submissionId)}
+                    className="text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+                  >
+                    Regenerate Draft
+                  </Button>
+                </div>
+
+                {copied && (
+                  <p
+                    role="status"
+                    className="text-xs text-emerald-600 dark:text-emerald-400 font-medium"
+                  >
+                    ✓ Draft copied to clipboard. You can paste it into any public review platform of your choice.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Reset Action */}
+            <div className="pt-4 border-t border-border/40 text-center">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleReset}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                Submit Another Response
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
@@ -405,10 +656,10 @@ export function FeedbackForm({ publicToken, tenantName, services }: FeedbackForm
       <div className="pt-4">
         <Button
           type="submit"
-          disabled={isPending}
+          disabled={isSubmitting}
           className="w-full sm:w-auto min-w-[180px] h-11 text-base font-medium cursor-pointer"
         >
-          {isPending ? (
+          {isSubmitting ? (
             <span className="flex items-center justify-center gap-2">
               <svg
                 className="h-4 w-4 animate-spin text-current"

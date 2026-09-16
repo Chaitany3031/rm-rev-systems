@@ -6,7 +6,7 @@ Phase 0 — Product and engineering foundation
 
 ## Current goal
 
-Feature 02 — Public Customer Feedback Experience completed and verified. Ready for Feature 03 (AI-Assisted Review Draft Generation).
+Feature 03 — AI-Assisted Review Draft Generation completed and verified. Ready for next feature.
 
 ## Completed
 
@@ -22,6 +22,7 @@ Feature 02 — Public Customer Feedback Experience completed and verified. Ready
 - Customer feedback and Google review-management boundaries defined.
 - Feature 01 specification written and reviewed.
 - Feature 02 specification written and reviewed (`context/feature-specs/02-public-feedback.md`).
+- Feature 03 specification written and reviewed (`context/feature-specs/03-ai-review-draft.md`).
 - **Feature 01 — Foundation completed and verified (2026-09-16)**:
   - Next.js 16 (App Router) + TypeScript + Tailwind CSS v4 foundation scaffolded.
   - shadcn/ui primitive conventions created (`Button`, `Card`, `Input`, `Label`, `Badge`).
@@ -53,14 +54,31 @@ Feature 02 — Public Customer Feedback Experience completed and verified. Ready
       - Dedicated success state confirming receipt without automatic review publication or manipulative prompts.
   - Added comprehensive test suite (`tests/public-feedback.test.ts` — 25 tests, total 42 tests passing across suite).
   - Verified 100% clean passes on `lint`, `type-check`, `test`, `build`, and `db:generate`.
+- **Feature 03 — AI-Assisted Review Draft Generation completed and verified (2026-09-16)**:
+  - Extended Prisma schema with persisted `ReviewDraft` model linked 1-to-1 to `FeedbackSubmission` with strict `Tenant` ownership cascading.
+  - Designed provider-agnostic `AIProvider` interface (`domains/reviews/types.ts` & `domains/ai/index.ts`) ensuring domain logic is decoupled from vendor SDKs.
+  - Implemented safe `MockAIProvider` for local development/testing with configurable static draft and timing simulation.
+  - Defined isolated, non-manipulative review drafting system prompt (`domains/ai/prompts/review-draft.ts`) strictly enforcing first-person customer voice without hallucinated facts.
+  - Created domain service `generateReviewDraft` (`domains/reviews/service.ts`) with:
+    - Structured input preparation based solely on verified feedback and active service snapshot records.
+    - Strict boundary and output length validation (1–1000 characters).
+    - Dedicated persistence in `ReviewDraft` keeping original customer feedback immutable.
+    - Safe error handling wrapping provider failures in `ExternalServiceError` without corrupting state.
+  - Implemented server action `generateReviewDraftAction` (`app/feedback/[publicToken]/actions.ts`) with safe, sanitized error responses preventing credential/stack trace leakage.
+  - Extended customer-facing UI (`app/feedback/[publicToken]/feedback-form.tsx`):
+    - Multi-stage feedback submission into editable AI review draft workflow.
+    - Distinct loading/generating indicator, editable draft textarea, error banner with retry option, and one-click copy to clipboard with 3-second visual confirmation.
+    - Explicit AI-generation callout informing customers they have full control to edit or discard.
+  - Added comprehensive test suite (`tests/ai-review-draft.test.ts` — 18 tests, total 60 tests passing across entire suite).
+  - Verified 100% clean passes on `lint`, `type-check`, `test`, `build`, and `db:generate`.
 
 ## In progress
 
-None (Feature 02 complete).
+None (Feature 03 complete).
 
 ## Next up
 
-1. Feature 03 — AI-Assisted Review Draft Generation.
+1. Feature 04 — Public Review Platform Selection & Handoff (or Google Business Profile integration per roadmap).
 
 ## Open questions / deferred decisions
 
