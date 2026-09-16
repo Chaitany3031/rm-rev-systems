@@ -8,13 +8,14 @@ import { z } from "zod";
 export const DRAFT_MAX_LENGTH = 1000;
 
 /**
- * Zod schema for the request identifier used to generate a review draft.
- * The customer-facing endpoint uses the FeedbackSubmission id (a cuid). We do
- * not treat this as an authorization mechanism — the tenant relationship is
- * always verified server-side before any generation or retrieval.
+ * Zod schema for the request identifiers used to generate a review draft.
+ * Requires both the tenant's opaque public token and the submission id.
+ * The server resolves the tenant from the public token and strictly verifies
+ * that the feedback submission belongs to that tenant before generation.
  */
 export const generateReviewDraftRequestSchema = z.object({
-  submissionId: z.string().min(1, "Feedback submission identifier is required"),
+  publicToken: z.string().trim().min(1, "Public feedback token is required"),
+  submissionId: z.string().trim().min(1, "Feedback submission identifier is required"),
 });
 
 export type GenerateReviewDraftRequest = z.infer<typeof generateReviewDraftRequestSchema>;

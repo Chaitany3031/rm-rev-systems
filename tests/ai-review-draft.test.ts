@@ -7,16 +7,25 @@ import {
   DRAFT_MAX_LENGTH,
   type AIProvider,
 } from "@/domains/reviews";
-import { getAIProvider, REVIEW_DRAFT_SYSTEM_PROMPT } from "@/domains/ai";
+import {
+  getAIProvider,
+  REVIEW_DRAFT_SYSTEM_PROMPT,
+  buildDeterministicMockDraft,
+} from "@/domains/ai";
 import { NotFoundError, ValidationError, ExternalServiceError } from "@/lib/errors";
 import { prisma } from "@/lib/db";
 
 // Mock the database client
 vi.mock("@/lib/db", () => ({
   prisma: {
+    tenant: {
+      findUnique: vi.fn(),
+    },
     feedbackSubmission: {
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     reviewDraft: {
       upsert: vi.fn(),
@@ -25,10 +34,18 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-describe("Feature 03 — AI-Assisted Review Draft Domain Tests", () => {
+describe("Feature 03 — AI-Assisted Review Draft Domain & Security Tests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
+
+  const mockTenant = {
+    id: "tenant-rm-1",
+    name: "RM Solution",
+    slug: "rm-solution",
+    publicToken: "rm-solution-dev",
+    description: "Digital systems",
+  };
 
   const mockSubmission = {
     id: "sub-100",
@@ -54,13 +71,31 @@ describe("Feature 03 — AI-Assisted Review Draft Domain Tests", () => {
   };
 
   describe("Validation Schemas", () => {
-    it("should accept a valid submissionId request", () => {
-      const res = generateReviewDraftRequestSchema.safeParse({ submissionId: "sub-100" });
+    it("should accept a valid publicToken and submissionId request", () => {
+      const res = generateReviewDraftRequestSchema.safeParse({
+        publicToken: "rm-solution-dev",
+        submissionId: "sub-100",
+      });
       expect(res.success).toBe(true);
+      if (res.success) {
+        expect(res.data.publicToken).toBe("rm-solution-dev");
+        expect(res.data.submissionId).toBe("sub-100");
+      }
     });
 
     it("should reject an empty submissionId request", () => {
-      const res = generateReviewDraftRequestSchema.safeParse({ submissionId: "" });
+      const res = generateReviewDraftRequestSchema.safeParse({
+        publicToken: "rm-solution-dev",
+        submissionId: "",
+      });
+      expect(res.success).toBe(false);
+    });
+
+    it("should reject an empty publicToken request", () => {
+      const res = generateReviewDraftRequestSchema.safeParse({
+        publicToken: "",
+        submissionId: "sub-100",
+      });
       expect(res.success).toBe(false);
     });
 
@@ -72,9 +107,11 @@ describe("Feature 03 — AI-Assisted Review Draft Domain Tests", () => {
       }
     });
 
-    it("should reject empty AI output", () => {
-      const res = reviewDraftOutputSchema.safeParse("   ");
-      expect(res.success).toBe(false);
+    it("should reject empty or whitespace-only AI output", () => {
+      const resEmpty = reviewDraftOutputSchema.safeParse("");
+      const resWhitespace = reviewDraftOutputSchema.safeParse("   ");
+      expect(resEmpty.success).toBe(false);
+      expect(resWhitespace.success).toBe(false);
     });
 
     it("should reject overly long AI output exceeding DRAFT_MAX_LENGTH", () => {
@@ -95,8 +132,9 @@ describe("Feature 03 — AI-Assisted Review Draft Domain Tests", () => {
   });
 
   describe("Domain Service: generateReviewDraft", () => {
-    it("should generate and persist a review draft for valid feedback", async () => {
-      vi.mocked(prisma.feedbackSubmission.findUnique).mockResolvedValueOnce(
+    it("should generate and persist a review draft for valid tenant token and submission", async () => {
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(mockTenant as never);
+      vi.mocked(prisma.feedbackSubmission.findFirst).mockResolvedValueOnce(
         mockSubmission as never
       );
 
@@ -111,12 +149,40 @@ describe("Feature 03 — AI-Assisted Review Draft Domain Tests", () => {
       vi.mocked(prisma.reviewDraft.upsert).mockResolvedValueOnce(persistedDraft as never);
 
       const result = await generateReviewDraft(
-        { submissionId: "sub-100" },
+        { publicToken: "rm-solution-dev", submissionId: "sub-100" },
         mockSuccessfulProvider
       );
 
       expect(result.submissionId).toBe("sub-100");
       expect(result.draft).toBe(persistedDraft.draft);
+
+      // Verify tenant resolution was performed using public token
+      expect(prisma.tenant.findUnique).toHaveBeenCalledWith({
+        where: { publicToken: "rm-solution-dev" },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          publicToken: true,
+          description: true,
+        },
+      });
+
+      // Verify submission query was strictly scoped to tenant.id
+      expect(prisma.feedbackSubmission.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: "sub-100",
+          tenantId: "tenant-rm-1",
+        },
+        include: {
+          tenant: true,
+          selectedServices: {
+            orderBy: { createdAt: "asc" },
+          },
+        },
+      });
+
+      // Verify AI provider invocation with structured domain input
       expect(mockSuccessfulProvider.generateReviewDraft).toHaveBeenCalledWith({
         businessName: "RM Solution",
         serviceNames: ["Website Development", "AI Chatbots"],
@@ -140,14 +206,73 @@ describe("Feature 03 — AI-Assisted Review Draft Domain Tests", () => {
 
       // Assert original FeedbackSubmission.feedback was NOT modified
       expect(prisma.feedbackSubmission.update).not.toHaveBeenCalled();
+      expect(prisma.feedbackSubmission.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("SECURITY: rejects cross-tenant attack (Tenant A token + Tenant B submission)", async () => {
+      // Tenant A resolves from token
+      const tenantA = {
+        id: "tenant-a-id",
+        name: "Tenant Alpha",
+        slug: "tenant-alpha",
+        publicToken: "token-tenant-a",
+        description: "Tenant A",
+      };
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(tenantA as never);
+
+      // Submission B belongs to Tenant B, so querying with { id: "sub-tenant-b", tenantId: "tenant-a-id" } returns null
+      vi.mocked(prisma.feedbackSubmission.findFirst).mockResolvedValueOnce(null);
+
+      await expect(
+        generateReviewDraft(
+          { publicToken: "token-tenant-a", submissionId: "sub-tenant-b" },
+          mockSuccessfulProvider
+        )
+      ).rejects.toThrow(NotFoundError);
+
+      // Verify submission query explicitly included tenant A's id to ensure isolation
+      expect(prisma.feedbackSubmission.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: "sub-tenant-b",
+          tenantId: "tenant-a-id",
+        },
+        include: {
+          tenant: true,
+          selectedServices: {
+            orderBy: { createdAt: "asc" },
+          },
+        },
+      });
+
+      // Crucial security checks: provider NOT called, review draft NOT created, feedback NOT modified
+      expect(mockSuccessfulProvider.generateReviewDraft).not.toHaveBeenCalled();
+      expect(prisma.reviewDraft.upsert).not.toHaveBeenCalled();
+      expect(prisma.feedbackSubmission.update).not.toHaveBeenCalled();
+    });
+
+    it("should reject when public token is invalid/nonexistent without querying submissions", async () => {
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
+
+      await expect(
+        generateReviewDraft(
+          { publicToken: "invalid-token", submissionId: "sub-100" },
+          mockSuccessfulProvider
+        )
+      ).rejects.toThrow(NotFoundError);
+
+      expect(prisma.feedbackSubmission.findFirst).not.toHaveBeenCalled();
+      expect(mockSuccessfulProvider.generateReviewDraft).not.toHaveBeenCalled();
+      expect(prisma.reviewDraft.upsert).not.toHaveBeenCalled();
     });
 
     it("should handle submission with empty/null feedback safely", async () => {
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(mockTenant as never);
+
       const submissionNoFeedback = {
         ...mockSubmission,
         feedback: null,
       };
-      vi.mocked(prisma.feedbackSubmission.findUnique).mockResolvedValueOnce(
+      vi.mocked(prisma.feedbackSubmission.findFirst).mockResolvedValueOnce(
         submissionNoFeedback as never
       );
 
@@ -161,7 +286,7 @@ describe("Feature 03 — AI-Assisted Review Draft Domain Tests", () => {
       } as never);
 
       await generateReviewDraft(
-        { submissionId: "sub-100" },
+        { publicToken: "rm-solution-dev", submissionId: "sub-100" },
         mockSuccessfulProvider
       );
 
@@ -173,12 +298,13 @@ describe("Feature 03 — AI-Assisted Review Draft Domain Tests", () => {
       });
     });
 
-    it("should throw NotFoundError for nonexistent submission", async () => {
-      vi.mocked(prisma.feedbackSubmission.findUnique).mockResolvedValueOnce(null);
+    it("should throw NotFoundError for nonexistent submission under valid tenant", async () => {
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(mockTenant as never);
+      vi.mocked(prisma.feedbackSubmission.findFirst).mockResolvedValueOnce(null);
 
       await expect(
         generateReviewDraft(
-          { submissionId: "nonexistent-id" },
+          { publicToken: "rm-solution-dev", submissionId: "nonexistent-id" },
           mockSuccessfulProvider
         )
       ).rejects.toThrow(NotFoundError);
@@ -189,12 +315,16 @@ describe("Feature 03 — AI-Assisted Review Draft Domain Tests", () => {
 
     it("should throw ValidationError for invalid request payload", async () => {
       await expect(
-        generateReviewDraft({ submissionId: "" }, mockSuccessfulProvider)
+        generateReviewDraft(
+          { publicToken: "", submissionId: "" },
+          mockSuccessfulProvider
+        )
       ).rejects.toThrow(ValidationError);
     });
 
     it("should handle AI provider failure gracefully as ExternalServiceError", async () => {
-      vi.mocked(prisma.feedbackSubmission.findUnique).mockResolvedValueOnce(
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(mockTenant as never);
+      vi.mocked(prisma.feedbackSubmission.findFirst).mockResolvedValueOnce(
         mockSubmission as never
       );
 
@@ -203,7 +333,10 @@ describe("Feature 03 — AI-Assisted Review Draft Domain Tests", () => {
       };
 
       await expect(
-        generateReviewDraft({ submissionId: "sub-100" }, failingProvider)
+        generateReviewDraft(
+          { publicToken: "rm-solution-dev", submissionId: "sub-100" },
+          failingProvider
+        )
       ).rejects.toThrow(ExternalServiceError);
 
       // Persistence must not be called on failure
@@ -211,8 +344,29 @@ describe("Feature 03 — AI-Assisted Review Draft Domain Tests", () => {
       expect(prisma.feedbackSubmission.update).not.toHaveBeenCalled();
     });
 
+    it("should reject non-string draft returned by AI provider", async () => {
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(mockTenant as never);
+      vi.mocked(prisma.feedbackSubmission.findFirst).mockResolvedValueOnce(
+        mockSubmission as never
+      );
+
+      const invalidTypeProvider: AIProvider = {
+        generateReviewDraft: vi.fn().mockResolvedValue({ draft: null as unknown as string }),
+      };
+
+      await expect(
+        generateReviewDraft(
+          { publicToken: "rm-solution-dev", submissionId: "sub-100" },
+          invalidTypeProvider
+        )
+      ).rejects.toThrow(ExternalServiceError);
+
+      expect(prisma.reviewDraft.upsert).not.toHaveBeenCalled();
+    });
+
     it("should reject empty draft returned by AI provider", async () => {
-      vi.mocked(prisma.feedbackSubmission.findUnique).mockResolvedValueOnce(
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(mockTenant as never);
+      vi.mocked(prisma.feedbackSubmission.findFirst).mockResolvedValueOnce(
         mockSubmission as never
       );
 
@@ -221,14 +375,18 @@ describe("Feature 03 — AI-Assisted Review Draft Domain Tests", () => {
       };
 
       await expect(
-        generateReviewDraft({ submissionId: "sub-100" }, emptyDraftProvider)
+        generateReviewDraft(
+          { publicToken: "rm-solution-dev", submissionId: "sub-100" },
+          emptyDraftProvider
+        )
       ).rejects.toThrow(ExternalServiceError);
 
       expect(prisma.reviewDraft.upsert).not.toHaveBeenCalled();
     });
 
     it("should reject overly long draft returned by AI provider", async () => {
-      vi.mocked(prisma.feedbackSubmission.findUnique).mockResolvedValueOnce(
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(mockTenant as never);
+      vi.mocked(prisma.feedbackSubmission.findFirst).mockResolvedValueOnce(
         mockSubmission as never
       );
 
@@ -237,10 +395,117 @@ describe("Feature 03 — AI-Assisted Review Draft Domain Tests", () => {
       };
 
       await expect(
-        generateReviewDraft({ submissionId: "sub-100" }, longDraftProvider)
+        generateReviewDraft(
+          { publicToken: "rm-solution-dev", submissionId: "sub-100" },
+          longDraftProvider
+        )
       ).rejects.toThrow(ExternalServiceError);
 
       expect(prisma.reviewDraft.upsert).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Deterministic Mock AI Provider (buildDeterministicMockDraft)", () => {
+    it("should produce an enthusiastic 5-star draft incorporating services and feedback", () => {
+      const draft = buildDeterministicMockDraft({
+        businessName: "RM Solution",
+        serviceNames: ["Website Development", "AI Chatbots"],
+        overallRating: 5,
+        customerFeedback: "The team exceeded our expectations!",
+      });
+
+      expect(draft).toContain("RM Solution");
+      expect(draft).toContain("Website Development and AI Chatbots");
+      expect(draft).toContain("excellent experience");
+      expect(draft).toContain("very satisfied");
+      expect(draft).toContain("The team exceeded our expectations!");
+    });
+
+    it("should produce a solid positive 4-star draft without exaggerated claims", () => {
+      const draft = buildDeterministicMockDraft({
+        businessName: "RM Solution",
+        serviceNames: ["CRM Software"],
+        overallRating: 4,
+        customerFeedback: "Delivered on time.",
+      });
+
+      expect(draft).toContain("positive experience");
+      expect(draft).toContain("CRM Software");
+      expect(draft).toContain("Delivered on time.");
+      expect(draft).not.toContain("very satisfied");
+    });
+
+    it("should produce a balanced neutral 3-star draft", () => {
+      const draft = buildDeterministicMockDraft({
+        businessName: "RM Solution",
+        serviceNames: ["Business Automation"],
+        overallRating: 3,
+        customerFeedback: "Communication could be quicker.",
+      });
+
+      expect(draft).toContain("satisfactory, though there were areas that could be improved");
+      expect(draft).toContain("Communication could be quicker.");
+      expect(draft).not.toContain("excellent");
+      expect(draft).not.toContain("recommend");
+    });
+
+    it("should produce a critical 2-star draft for low ratings", () => {
+      const draft = buildDeterministicMockDraft({
+        businessName: "RM Solution",
+        serviceNames: ["Meta Ads"],
+        overallRating: 2,
+        customerFeedback: "Did not achieve desired campaign results.",
+      });
+
+      expect(draft).toContain("did not meet my expectations and there were several issues");
+      expect(draft).toContain("Did not achieve desired campaign results.");
+      expect(draft).not.toContain("excellent");
+      expect(draft).not.toContain("satisfied");
+    });
+
+    it("should produce a dissatisfied 1-star draft for very poor ratings", () => {
+      const draft = buildDeterministicMockDraft({
+        businessName: "RM Solution",
+        serviceNames: ["Website Development"],
+        overallRating: 1,
+        customerFeedback: "Project was not delivered as specified.",
+      });
+
+      expect(draft).toContain("disappointing experience");
+      expect(draft).toContain("fell short of expectations");
+      expect(draft).toContain("Project was not delivered as specified.");
+      expect(draft).not.toContain("recommend");
+      expect(draft).not.toContain("excellent");
+    });
+
+    it("should produce concise sensible draft when customer feedback is null or empty", () => {
+      const draftNull = buildDeterministicMockDraft({
+        businessName: "RM Solution",
+        serviceNames: ["Website Development", "CRM Software", "AI Chatbots"],
+        overallRating: 5,
+        customerFeedback: null,
+      });
+
+      expect(draftNull).toContain("RM Solution");
+      expect(draftNull).toContain("Website Development, CRM Software, and AI Chatbots");
+      expect(draftNull).toContain("excellent experience");
+      expect(draftNull.length).toBeGreaterThan(10);
+      expect(draftNull.length).toBeLessThan(DRAFT_MAX_LENGTH);
+    });
+
+    it("MockAIProvider instance executes and returns deterministic output", async () => {
+      const provider = getAIProvider();
+      const output = await provider.generateReviewDraft({
+        businessName: "RM Solution",
+        serviceNames: ["Website Development"],
+        overallRating: 5,
+        customerFeedback: "Great work!",
+      });
+
+      expect(output).toBeDefined();
+      expect(output.draft).toContain("RM Solution");
+      expect(output.draft).toContain("Website Development");
+      expect(output.draft).toContain("Great work!");
     });
   });
 
@@ -250,7 +515,8 @@ describe("Feature 03 — AI-Assisted Review Draft Domain Tests", () => {
         "@/app/feedback/[publicToken]/actions"
       );
 
-      vi.mocked(prisma.feedbackSubmission.findUnique).mockResolvedValueOnce(
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(mockTenant as never);
+      vi.mocked(prisma.feedbackSubmission.findFirst).mockResolvedValueOnce(
         mockSubmission as never
       );
 
@@ -264,7 +530,11 @@ describe("Feature 03 — AI-Assisted Review Draft Domain Tests", () => {
         updatedAt: mockDate,
       } as never);
 
-      const result = await generateReviewDraftAction("sub-100");
+      const result = await generateReviewDraftAction({
+        publicToken: "rm-solution-dev",
+        submissionId: "sub-100",
+      });
+
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.submissionId).toBe("sub-100");
@@ -272,38 +542,93 @@ describe("Feature 03 — AI-Assisted Review Draft Domain Tests", () => {
       }
     });
 
-    it("should return safe error response on NotFoundError", async () => {
+    it("SECURITY: server action rejects cross-tenant request safely", async () => {
       const { generateReviewDraftAction } = await import(
         "@/app/feedback/[publicToken]/actions"
       );
 
-      vi.mocked(prisma.feedbackSubmission.findUnique).mockResolvedValueOnce(null);
+      // Tenant A token resolves Tenant A
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+        id: "tenant-a-id",
+        name: "Tenant A",
+        slug: "tenant-a",
+        publicToken: "token-tenant-a",
+      } as never);
 
-      const result = await generateReviewDraftAction("non-existent-sub");
+      // Submission B belongs to Tenant B, so findFirst returns null
+      vi.mocked(prisma.feedbackSubmission.findFirst).mockResolvedValueOnce(null);
+
+      const result = await generateReviewDraftAction({
+        publicToken: "token-tenant-a",
+        submissionId: "sub-belonging-to-tenant-b",
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors.form[0]).toContain("could not be found");
+      }
+      expect(prisma.reviewDraft.upsert).not.toHaveBeenCalled();
+    });
+
+    it("should return safe error response on ValidationError (missing fields)", async () => {
+      const { generateReviewDraftAction } = await import(
+        "@/app/feedback/[publicToken]/actions"
+      );
+
+      const result = await generateReviewDraftAction({
+        publicToken: "",
+        submissionId: "",
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.errors.publicToken).toBeDefined();
+        expect(result.errors.submissionId).toBeDefined();
+      }
+    });
+
+    it("should return safe error response on NotFoundError (invalid public token)", async () => {
+      const { generateReviewDraftAction } = await import(
+        "@/app/feedback/[publicToken]/actions"
+      );
+
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
+
+      const result = await generateReviewDraftAction({
+        publicToken: "non-existent-token",
+        submissionId: "sub-100",
+      });
+
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.errors.form[0]).toContain("could not be found");
       }
     });
 
-    it("should return safe error response on ExternalServiceError without exposing keys or internals", async () => {
+    it("should return safe error response on unexpected failure without exposing keys or stack traces", async () => {
       const { generateReviewDraftAction } = await import(
         "@/app/feedback/[publicToken]/actions"
       );
 
-      vi.mocked(prisma.feedbackSubmission.findUnique).mockResolvedValueOnce(
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(mockTenant as never);
+      vi.mocked(prisma.feedbackSubmission.findFirst).mockResolvedValueOnce(
         mockSubmission as never
       );
 
-      // Force provider error by throwing inside mockups
+      // Force unexpected error inside database upsert
       vi.mocked(prisma.reviewDraft.upsert).mockImplementationOnce(() => {
-        throw new Error("DB crash");
+        throw new Error("DATABASE_CRASH_SECRET_KEY_12345");
       });
 
-      const result = await generateReviewDraftAction("sub-100");
+      const result = await generateReviewDraftAction({
+        publicToken: "rm-solution-dev",
+        submissionId: "sub-100",
+      });
+
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.errors.form[0]).not.toContain("API_KEY");
+        expect(result.errors.form[0]).not.toContain("DATABASE_CRASH");
+        expect(result.errors.form[0]).not.toContain("SECRET_KEY");
         expect(result.errors.form[0]).not.toContain("stack");
         expect(result.errors.form[0]).toContain("unexpected error");
       }

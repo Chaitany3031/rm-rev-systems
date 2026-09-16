@@ -54,22 +54,24 @@ Feature 03 — AI-Assisted Review Draft Generation completed and verified. Ready
       - Dedicated success state confirming receipt without automatic review publication or manipulative prompts.
   - Added comprehensive test suite (`tests/public-feedback.test.ts` — 25 tests, total 42 tests passing across suite).
   - Verified 100% clean passes on `lint`, `type-check`, `test`, `build`, and `db:generate`.
-- **Feature 03 — AI-Assisted Review Draft Generation completed and verified (2026-09-16)**:
+- **Feature 03 — AI-Assisted Review Draft Generation completed, hardened, and verified (2026-09-16)**:
   - Extended Prisma schema with persisted `ReviewDraft` model linked 1-to-1 to `FeedbackSubmission` with strict `Tenant` ownership cascading.
+  - Added Prisma migrations (`20260916000000_init` baseline and `20260916095531_add_review_draft`) with migration lock file.
+  - Implemented real tenant authorization pipeline: `publicToken + submissionId` -> resolve tenant -> load submission scoped strictly to `tenant.id` -> persist draft under same tenant. Cross-tenant attacks (Tenant A token + Tenant B submission) are strictly denied at domain and server action levels.
   - Designed provider-agnostic `AIProvider` interface (`domains/reviews/types.ts` & `domains/ai/index.ts`) ensuring domain logic is decoupled from vendor SDKs.
-  - Implemented safe `MockAIProvider` for local development/testing with configurable static draft and timing simulation.
+  - Implemented deterministic, grounded `MockAIProvider` for local development/testing: dynamically reflects rating sentiment (1–5 stars), business name, selected services, and customer feedback without universal positive bias or hallucinated facts.
   - Defined isolated, non-manipulative review drafting system prompt (`domains/ai/prompts/review-draft.ts`) strictly enforcing first-person customer voice without hallucinated facts.
   - Created domain service `generateReviewDraft` (`domains/reviews/service.ts`) with:
     - Structured input preparation based solely on verified feedback and active service snapshot records.
     - Strict boundary and output length validation (1–1000 characters).
     - Dedicated persistence in `ReviewDraft` keeping original customer feedback immutable.
     - Safe error handling wrapping provider failures in `ExternalServiceError` without corrupting state.
-  - Implemented server action `generateReviewDraftAction` (`app/feedback/[publicToken]/actions.ts`) with safe, sanitized error responses preventing credential/stack trace leakage.
+  - Implemented server action `generateReviewDraftAction` (`app/feedback/[publicToken]/actions.ts`) preserving public token context with safe, sanitized error responses preventing credential/stack trace leakage.
   - Extended customer-facing UI (`app/feedback/[publicToken]/feedback-form.tsx`):
     - Multi-stage feedback submission into editable AI review draft workflow.
     - Distinct loading/generating indicator, editable draft textarea, error banner with retry option, and one-click copy to clipboard with 3-second visual confirmation.
     - Explicit AI-generation callout informing customers they have full control to edit or discard.
-  - Added comprehensive test suite (`tests/ai-review-draft.test.ts` — 18 tests, total 60 tests passing across entire suite).
+  - Added comprehensive test suite (`tests/ai-review-draft.test.ts` — 31 tests, total 73 tests passing across entire suite, covering cross-tenant rejection, invalid public tokens, provider failure, rating variations, and immutability).
   - Verified 100% clean passes on `lint`, `type-check`, `test`, `build`, and `db:generate`.
 
 ## In progress

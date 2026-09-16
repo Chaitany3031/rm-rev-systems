@@ -32,9 +32,7 @@ export const envSchema = z.object({
     .default("mock"),
   AI_MOCK_DRAFT: z
     .string()
-    .default(
-      "I recently used RM Solution and was impressed by the quality of their work. The team was professional and delivered exactly what I needed. I would definitely recommend them to others looking for reliable business solutions."
-    ),
+    .optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

@@ -2,13 +2,15 @@
 
 import { submitFeedback } from "@/domains/feedback";
 import type { FeedbackActionState, SubmitFeedbackInput } from "@/domains/feedback";
-import { generateReviewDraft, type ReviewDraftResult } from "@/domains/reviews";
+import { generateReviewDraft, type ReviewDraftResult, type GenerateReviewDraftRequest } from "@/domains/reviews";
 import { getAIProvider } from "@/domains/ai";
 import { ValidationError, NotFoundError, ExternalServiceError, log } from "@/lib/errors";
 
 export type ReviewDraftActionState =
   | { success: true; data: ReviewDraftResult; errors?: never; message?: never }
   | { success: false; data?: never; errors: Record<string, string[]>; message?: string };
+
+export type GenerateReviewDraftInput = GenerateReviewDraftRequest;
 
 /**
  * Server Action for handling customer feedback submissions.
@@ -60,13 +62,14 @@ export async function submitFeedbackAction(
 
 /**
  * Server Action for generating an AI review draft from a persisted submission.
+ * Preserves publicToken tenant context to strictly prevent cross-tenant draft generation.
  */
 export async function generateReviewDraftAction(
-  submissionId: string
+  input: GenerateReviewDraftInput
 ): Promise<ReviewDraftActionState> {
   try {
     const provider = getAIProvider();
-    const result = await generateReviewDraft({ submissionId }, provider);
+    const result = await generateReviewDraft(input, provider);
     return {
       success: true,
       data: result,
@@ -84,7 +87,7 @@ export async function generateReviewDraftAction(
       return {
         success: false,
         errors: {
-          form: ["Feedback submission could not be found."],
+          form: ["Feedback submission or business could not be found."],
         },
         message: error.message,
       };

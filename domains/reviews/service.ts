@@ -1,19 +1,21 @@
 import { prisma } from "@/lib/db";
+import { getTenantByPublicToken } from "@/domains/tenants";
 import { ValidationError, NotFoundError, ExternalServiceError, log } from "@/lib/errors";
 import { safeParse } from "@/lib/validation";
-import { generateReviewDraftRequestSchema } from "./validation";
+import { generateReviewDraftRequestSchema, DRAFT_MAX_LENGTH } from "./validation";
 import type { AIProvider, ReviewDraftResult } from "./types";
 
 /**
  * Application domain service for AI review-draft generation.
  *
  * Responsibilities:
- *   1. Resolve the tenant by opaque public token (no raw tenant IDs from client).
- *   2. Load the feedback submission scoped strictly to that tenant.
- *   3. Prepare the AI input from data actually present in the feedback domain.
- *   4. Invoke the provider-agnostic `AIProvider`.
- *   5. Validate the raw AI output before persistence.
- *   6. Upsert the persisted ReviewDraft (tenant + submission ownership enforced).
+ *   1. Validate the request parameters (publicToken + submissionId).
+ *   2. Resolve the tenant strictly by opaque public token.
+ *   3. Load the feedback submission scoped strictly to that tenant (cross-tenant denied).
+ *   4. Prepare the AI input from data actually present in the feedback domain.
+ *   5. Invoke the provider-agnostic `AIProvider`.
+ *   6. Validate the raw AI output before persistence.
+ *   7. Upsert the persisted ReviewDraft (tenant + submission ownership enforced).
  *
  * The original `FeedbackSubmission.feedback` is never modified. A provider
  * failure surfaces as an application error and preserves the original feedback.
@@ -22,21 +24,27 @@ export async function generateReviewDraft(
   input: unknown,
   aiProvider: AIProvider
 ): Promise<ReviewDraftResult> {
-  // 1. Validate the request identifier
+  // 1. Validate the request identifiers (publicToken + submissionId)
   const parseResult = safeParse(generateReviewDraftRequestSchema, input);
   if (!parseResult.success) {
     throw new ValidationError("Invalid review-draft request", parseResult.errors);
   }
 
-  const { submissionId } = parseResult.data;
+  const { publicToken, submissionId } = parseResult.data;
 
-  // 2. Load the feedback submission with its tenant and selected services.
-  //    The publicToken is not part of a request identifier here — the caller
-  //    (server action) verifies the token->tenant relationship first and passes
-  //    the resolved submission scoped to that tenant. Tenant ownership is still
-  //    enforced because the submission was loaded under the resolved tenant.
-  const submission = await prisma.feedbackSubmission.findUnique({
-    where: { id: submissionId },
+  // 2. Resolve the tenant from the opaque public token
+  const tenant = await getTenantByPublicToken(publicToken);
+  if (!tenant) {
+    throw new NotFoundError("Business not found for the provided feedback link");
+  }
+
+  // 3. Load the feedback submission strictly scoped to this tenant.
+  //    This rejects Tenant A token + Tenant B submissionId with NotFoundError.
+  const submission = await prisma.feedbackSubmission.findFirst({
+    where: {
+      id: submissionId,
+      tenantId: tenant.id,
+    },
     include: {
       tenant: true,
       selectedServices: {
@@ -46,10 +54,10 @@ export async function generateReviewDraft(
   });
 
   if (!submission) {
-    throw new NotFoundError("Feedback submission not found");
+    throw new NotFoundError("Feedback submission not found for this business");
   }
 
-  // 3. Prepare the AI input strictly from the feedback domain.
+  // 4. Prepare the AI input strictly from the feedback domain.
   const domainInput = {
     businessName: submission.tenant.name,
     serviceNames: submission.selectedServices.map((s) => s.serviceName),
@@ -57,7 +65,7 @@ export async function generateReviewDraft(
     customerFeedback: submission.feedback,
   };
 
-  // 4. Invoke the provider (may throw ExternalServiceError on failure).
+  // 5. Invoke the provider (may throw ExternalServiceError on failure).
   let output;
   try {
     output = await aiProvider.generateReviewDraft(domainInput);
@@ -76,34 +84,35 @@ export async function generateReviewDraft(
 
   const draft = output.draft.trim();
 
-  // 5. Validate the raw AI output.
+  // 6. Validate the raw AI output.
   if (draft.length === 0) {
     throw new ExternalServiceError("AIProvider", "AI provider returned an empty review draft");
   }
-  if (draft.length > 1000) {
-    throw new ExternalServiceError("AIProvider", "AI provider returned an overly long review draft");
+  if (draft.length > DRAFT_MAX_LENGTH) {
+    throw new ExternalServiceError(
+      "AIProvider",
+      `AI provider returned an overly long review draft exceeding ${DRAFT_MAX_LENGTH} characters`
+    );
   }
 
-  // 6. Persist the draft. Tenant scoping on the record uses the same tenant as
-  //    the loaded submission, so it is impossible to write a draft under the
-  //    wrong tenant.
+  // 7. Persist the draft under the verified tenant.
   const persisted = await prisma.reviewDraft.upsert({
     where: {
       feedbackSubmissionId: submissionId,
     },
     update: {
       draft,
-      tenantId: submission.tenantId,
+      tenantId: tenant.id,
     },
     create: {
       feedbackSubmissionId: submissionId,
-      tenantId: submission.tenantId,
+      tenantId: tenant.id,
       draft,
     },
   });
 
   log("info", "AI review draft generated and persisted", {
-    tenantId: submission.tenantId,
+    tenantId: tenant.id,
     submissionId,
     draftLength: draft.length,
   });

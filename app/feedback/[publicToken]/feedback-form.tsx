@@ -122,7 +122,10 @@ export function FeedbackForm({ publicToken, tenantName, services }: FeedbackForm
   const triggerGenerateDraft = (id: string) => {
     setDraftError(null);
     startDraftTransition(async () => {
-      const res = await generateReviewDraftAction(id);
+      const res = await generateReviewDraftAction({
+        publicToken,
+        submissionId: id,
+      });
       if (res.success) {
         setReviewDraft(res.data.draft);
       } else {
