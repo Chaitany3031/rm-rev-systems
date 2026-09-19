@@ -1,6 +1,7 @@
 import { Metadata } from "next";
 import { requireTenantAdmin } from "@/domains/auth";
 import { getGoogleConnectionForTenant, getTenantReviews } from "@/domains/google";
+import { AuthenticationError, ForbiddenError } from "@/lib/errors";
 import { ReviewsInboxClient } from "./reviews-inbox-client";
 
 export const metadata: Metadata = {
@@ -19,7 +20,20 @@ export default async function ReviewsPage({ searchParams }: ReviewsPageProps) {
   const params = await searchParams;
   // Authenticate: validate tenant identifier and reject public feedback tokens
   const tenantIdentifier = params.tenantId || params.tenantSlug || "rm-solution";
-  const authContext = await requireTenantAdmin(tenantIdentifier);
+  let authContext: Awaited<ReturnType<typeof requireTenantAdmin>>;
+  try {
+    authContext = await requireTenantAdmin(tenantIdentifier);
+  } catch (error) {
+    if (error instanceof AuthenticationError) {
+      return <AdminAccessState title="Sign-in required" message="Please sign in to view business reviews." />;
+    }
+
+    if (error instanceof ForbiddenError) {
+      return <AdminAccessState title="Access denied" message="You do not have administrator access to this business." />;
+    }
+
+    throw error;
+  }
 
   // Resolve authenticated tenant (session-derived)
   const tenant = {
@@ -60,6 +74,17 @@ export default async function ReviewsPage({ searchParams }: ReviewsPageProps) {
           limit={20}
           offset={0}
         />
+      </div>
+    </main>
+  );
+}
+
+function AdminAccessState({ title, message }: { title: string; message: string }) {
+  return (
+    <main className="min-h-screen bg-background flex items-center justify-center p-4">
+      <div className="max-w-md w-full p-6 border rounded-lg bg-card text-card-foreground shadow-sm text-center space-y-4">
+        <h1 className="text-xl font-semibold text-foreground">{title}</h1>
+        <p className="text-sm text-muted-foreground">{message}</p>
       </div>
     </main>
   );

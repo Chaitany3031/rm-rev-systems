@@ -75,11 +75,14 @@ export async function selectGoogleLocationAction(
   input: SelectLocationInput
 ): Promise<ActionResult<GoogleConnectionPublicInfo>> {
   try {
-    // 1. Authorize tenant admin
-    await requireTenantAdmin(input.tenantId);
+    // 1. Authorize tenant admin using the authenticated tenant membership.
+    const admin = await requireTenantAdmin(input.tenantId);
 
-    // 2. Select location
-    const updated = await selectGoogleLocation(input);
+    // 2. Use the authenticated tenant as the source of truth; browser-supplied tenant data is never trusted.
+    const updated = await selectGoogleLocation({
+      ...input,
+      tenantId: admin.tenantId,
+    });
 
     return {
       success: true,

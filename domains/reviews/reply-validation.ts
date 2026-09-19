@@ -46,6 +46,14 @@ export const updateReplyDraftSchema = z.object({
 
 export type UpdateReplyDraftInput = z.infer<typeof updateReplyDraftSchema>;
 
+/** Server-action input for approving a tenant-scoped reply draft. */
+export const approveReplyDraftRequestSchema = z.object({
+  tenantId: z.string().trim().min(1, "Tenant identifier is required"),
+  draftId: z.string().trim().min(1, "Reply draft identifier is required"),
+});
+
+export type ApproveReplyDraftRequest = z.infer<typeof approveReplyDraftRequestSchema>;
+
 /**
  * Schema for the minimal review data sent to the AI provider.
  * Only safe, non-sensitive fields from GoogleReview are included.

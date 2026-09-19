@@ -27,6 +27,7 @@ vi.mock("@/lib/db", () => ({
       findFirst: vi.fn(),
       upsert: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -348,7 +349,8 @@ describe("Feature 06 — AI Reply Draft Domain & Security Tests", () => {
         createdAt: new Date(),
         updatedAt: new Date(),
       };
-      prisma.reviewReplyDraft.update.mockResolvedValueOnce(updated as never);
+      prisma.reviewReplyDraft.updateMany.mockResolvedValueOnce({ count: 1 });
+      prisma.reviewReplyDraft.findFirst.mockResolvedValueOnce(updated as never);
 
       const result = await updateReplyDraft(
         "tenant-rm-1",
@@ -358,8 +360,8 @@ describe("Feature 06 — AI Reply Draft Domain & Security Tests", () => {
 
       expect(result.content).toBe("New edited content");
       expect(result.id).toBe("reply-draft-1");
-      expect(prisma.reviewReplyDraft.update).toHaveBeenCalledWith({
-        where: { id: "reply-draft-1" },
+      expect(prisma.reviewReplyDraft.updateMany).toHaveBeenCalledWith({
+        where: { id: "reply-draft-1", tenantId: "tenant-rm-1" },
         data: { content: "New edited content", updatedAt: expect.any(Date) },
       });
     });
@@ -376,7 +378,8 @@ describe("Feature 06 — AI Reply Draft Domain & Security Tests", () => {
         updatedAt: new Date(),
       };
       prisma.reviewReplyDraft.findFirst.mockResolvedValueOnce(existingDraft as never);
-      prisma.reviewReplyDraft.update.mockResolvedValueOnce({
+      prisma.reviewReplyDraft.updateMany.mockResolvedValueOnce({ count: 1 });
+      prisma.reviewReplyDraft.findFirst.mockResolvedValueOnce({
         ...existingDraft,
         content: "Trimmed",
       } as never);
@@ -389,7 +392,7 @@ describe("Feature 06 — AI Reply Draft Domain & Security Tests", () => {
       await expect(
         updateReplyDraft("tenant-rm-1", "reply-draft-1", "")
       ).rejects.toThrow(ValidationError);
-      expect(prisma.reviewReplyDraft.update).not.toHaveBeenCalled();
+      expect(prisma.reviewReplyDraft.updateMany).not.toHaveBeenCalled();
     });
 
     it("should reject whitespace-only content", async () => {
@@ -402,7 +405,7 @@ describe("Feature 06 — AI Reply Draft Domain & Security Tests", () => {
       await expect(
         updateReplyDraft("tenant-rm-1", "reply-draft-1", "a".repeat(REPLY_DRAFT_MAX_LENGTH + 1))
       ).rejects.toThrow(ValidationError);
-      expect(prisma.reviewReplyDraft.update).not.toHaveBeenCalled();
+      expect(prisma.reviewReplyDraft.updateMany).not.toHaveBeenCalled();
     });
 
     it("should reject non-string content", async () => {
@@ -417,7 +420,7 @@ describe("Feature 06 — AI Reply Draft Domain & Security Tests", () => {
       await expect(
         updateReplyDraft("tenant-rm-1", "reply-draft-999", "Edit")
       ).rejects.toThrow(NotFoundError);
-      expect(prisma.reviewReplyDraft.update).not.toHaveBeenCalled();
+      expect(prisma.reviewReplyDraft.updateMany).not.toHaveBeenCalled();
     });
   });
 

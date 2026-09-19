@@ -18,5 +18,6 @@ export {
   updateReplyDraft,
   regenerateReplyDraft,
   getReplyDraft,
+  approveReplyDraft,
 } from "./reply-service";
 export type { ReplyDraftResult } from "./reply-service";

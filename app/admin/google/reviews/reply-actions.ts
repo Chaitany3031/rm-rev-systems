@@ -7,7 +7,9 @@ import {
   updateReplyDraft,
   regenerateReplyDraft,
   getReplyDraft,
+  approveReplyDraft,
 } from "@/domains/reviews";
+import { approveReplyDraftRequestSchema } from "@/domains/reviews";
 import {
   ValidationError,
   NotFoundError,
@@ -17,11 +19,23 @@ import {
 } from "@/lib/errors";
 
 export type ReplyDraftActionState =
-  | { success: true; data: { id: string; content: string; googleReviewId: string }; errors?: never; message?: never }
+  | {
+      success: true;
+      data: {
+        id: string;
+        content: string;
+        googleReviewId: string;
+        approved: boolean;
+        approvedAt?: Date | null;
+        approvedById?: string | null;
+      };
+      errors?: never;
+      message?: never;
+    }
   | { success: false; data?: never; errors: Record<string, string[]>; message?: string };
 
 export type ReplyDraftRegenerateState =
-  | { success: true; data: { id: string; content: string; googleReviewId: string }; errors?: never; message?: never }
+  | { success: true; data: { id: string; content: string; googleReviewId: string; approved: boolean; approvedAt?: Date | null; approvedById?: string | null }; errors?: never; message?: never }
   | { success: false; data?: never; errors: Record<string, string[]>; message?: string };
 
 /**
@@ -46,6 +60,9 @@ export async function generateReplyDraftAction(
         id: result.id,
         content: result.content,
         googleReviewId: result.googleReviewId,
+         approved: result.approved ?? false,
+         approvedAt: result.approvedAt,
+         approvedById: result.approvedById,
       },
     };
   } catch (error) {
@@ -125,6 +142,9 @@ export async function editReplyDraftAction(
         id: result.id,
         content: result.content,
         googleReviewId: result.googleReviewId,
+         approved: result.approved ?? false,
+         approvedAt: result.approvedAt,
+         approvedById: result.approvedById,
       },
     };
   } catch (error) {
@@ -162,7 +182,7 @@ export async function editReplyDraftAction(
         form: ["An unexpected error occurred while saving the reply draft. Please try again."],
       },
       message: "An unexpected error occurred. Please try again.",
-    };
+    }
   }
 }
 
@@ -188,6 +208,9 @@ export async function regenerateReplyDraftAction(
         id: result.id,
         content: result.content,
         googleReviewId: result.googleReviewId,
+         approved: result.approved ?? false,
+         approvedAt: result.approvedAt,
+         approvedById: result.approvedById,
       },
     };
   } catch (error) {
@@ -233,7 +256,7 @@ export async function regenerateReplyDraftAction(
         form: ["An unexpected error occurred while regenerating the reply draft. Please try again."],
       },
       message: "An unexpected error occurred. Please try again.",
-    };
+    }
   }
 }
 
@@ -265,6 +288,9 @@ export async function fetchReplyDraftAction(
         id: draft.id,
         content: draft.content,
         googleReviewId: draft.googleReviewId,
+         approved: draft.approved ?? false,
+         approvedAt: draft.approvedAt,
+         approvedById: draft.approvedById,
       },
     };
   } catch (error) {
@@ -294,6 +320,72 @@ export async function fetchReplyDraftAction(
         form: ["An unexpected error occurred while fetching the reply draft. Please try again."],
       },
       message: "An unexpected error occurred. Please try again.",
+    }
+  }
+}
+
+/**
+ * Server Action: Approve an existing reply draft.
+ * Authenticated tenant admin only. Draft ownership verified.
+ */
+export async function approveReplyDraftAction(
+  tenantId: string,
+  draftId: string
+): Promise<ReplyDraftActionState> {
+  try {
+    const input = approveReplyDraftRequestSchema.parse({ tenantId, draftId });
+    // 1. Authenticate admin and resolve tenant from session
+    const admin = await requireTenantAdmin(input.tenantId);
+
+    // 2. Approve draft (tenant isolation enforced in domain service)
+    const result = await approveReplyDraft(admin.tenantId, input.draftId, admin.userId);
+
+    return {
+      success: true,
+      data: {
+        id: result.id,
+        content: result.content,
+        googleReviewId: result.googleReviewId,
+        approved: result.approved ?? false,
+        approvedAt: result.approvedAt,
+        approvedById: result.approvedById,
+      },
     };
+  } catch (error) {
+    if (error instanceof AuthorizationError) {
+      return {
+        success: false,
+        errors: { form: [error.message] },
+        message: error.message,
+      };
+    }
+
+    if (error instanceof ValidationError) {
+      return {
+        success: false,
+        errors: error.details ?? { form: [error.message] },
+        message: error.message,
+      };
+    }
+
+    if (error instanceof NotFoundError) {
+      return {
+        success: false,
+        errors: { form: [error.message] },
+        message: error.message,
+      };
+    }
+
+    log("error", "Unhandled error in approveReplyDraftAction", {
+      errorMessage: error instanceof Error ? error.message : "Unknown error",
+    });
+
+    return {
+      success: false,
+      errors: {
+        form: ["An unexpected error occurred while approving the reply draft. Please try again."],
+      },
+      message: "An unexpected error occurred. Please try again.",
+    }
   }
 }

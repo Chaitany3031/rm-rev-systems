@@ -24,6 +24,7 @@ describe("Foundation Unit Tests", () => {
       const result = validateEnv({
         NODE_ENV: "production",
         DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
+        AUTH_SECRET: "this-is-a-valid-production-secret-123456",
       });
       expect(result.success).toBe(true);
       if (result.success) {

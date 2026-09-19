@@ -1,14 +1,15 @@
 import { prisma } from "@/lib/db";
-import { NotFoundError, AuthorizationError } from "@/lib/errors";
+import { AuthorizationError, ForbiddenError } from "@/lib/errors";
+import { resolveCurrentUser } from "./session";
 import type { TenantAdminContext } from "./types";
 
 /**
- * Resolves and validates an administrative tenant context.
+ * Resolves and validates an administrative tenant context from server-side identity.
  *
  * Enforces:
- * - Tenant exists in the system.
- * - Public feedback tokens are rejected as admin authorization tokens.
- * - Resolves the tenant context required for administrative operations such as Google integration.
+ * - An authenticated user exists.
+ * - The authenticated user has membership in the requested tenant.
+ * - The membership has the ADMIN role.
  */
 export async function requireTenantAdmin(
   tenantIdOrSlug: string
@@ -17,48 +18,38 @@ export async function requireTenantAdmin(
     throw new AuthorizationError("Tenant identifier is required for administrative operations");
   }
 
+  const currentUser = await resolveCurrentUser();
   const trimmed = tenantIdOrSlug.trim();
 
-  // Guard: explicitly reject if someone passes an opaque publicToken as an admin identifier
-  const publicTokenMatch = await prisma.tenant.findUnique({
-    where: { publicToken: trimmed },
-    select: { id: true, publicToken: true },
-  });
-
-  if (publicTokenMatch && trimmed === publicTokenMatch.publicToken) {
-    // If the input was exclusively matching a publicToken and not an actual tenant ID or slug
-    const directIdOrSlugMatch = await prisma.tenant.findFirst({
-      where: {
+  const membership = await prisma.tenantMembership.findFirst({
+    where: {
+      userId: currentUser.userId,
+      tenant: {
         OR: [{ id: trimmed }, { slug: trimmed }],
       },
-    });
-
-    if (!directIdOrSlugMatch) {
-      throw new AuthorizationError(
-        "Public feedback tokens cannot be used to perform administrative operations"
-      );
-    }
-  }
-
-  const tenant = await prisma.tenant.findFirst({
-    where: {
-      OR: [{ id: trimmed }, { slug: trimmed }],
+      role: "ADMIN",
     },
     select: {
-      id: true,
-      name: true,
-      slug: true,
+      role: true,
+      tenant: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+        },
+      },
     },
   });
 
-  if (!tenant) {
-    throw new NotFoundError(`Tenant "${trimmed}" not found`);
+  if (!membership) {
+    throw new ForbiddenError("You are not an administrator of this tenant");
   }
 
   return {
-    tenantId: tenant.id,
-    tenantName: tenant.name,
-    tenantSlug: tenant.slug,
+    userId: currentUser.userId,
+    tenantId: membership.tenant.id,
+    tenantName: membership.tenant.name,
+    tenantSlug: membership.tenant.slug,
     role: "ADMIN",
   };
 }

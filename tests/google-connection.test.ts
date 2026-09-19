@@ -27,12 +27,16 @@ import {
 import { requireTenantAdmin } from "@/domains/auth";
 import { NotFoundError, ValidationError, AuthorizationError } from "@/lib/errors";
 import { prisma } from "@/lib/db";
+import { resolveCurrentUser } from "@/domains/auth/session";
 
 // Mock the database client
 vi.mock("@/lib/db", () => ({
   prisma: {
     tenant: {
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
+    },
+    tenantMembership: {
       findFirst: vi.fn(),
     },
     googleConnection: {
@@ -43,6 +47,10 @@ vi.mock("@/lib/db", () => ({
       delete: vi.fn(),
     },
   },
+}));
+
+vi.mock("@/domains/auth/session", () => ({
+  resolveCurrentUser: vi.fn(),
 }));
 
 describe("Feature 04 — Google Business Profile Connection Domain & Security Tests", () => {
@@ -550,12 +558,8 @@ describe("Feature 04 — Google Business Profile Connection Domain & Security Te
     });
 
     it("SECURITY: public feedback tokens cannot manage Google connections", async () => {
-      // Mock tenant where publicToken is rm-solution-dev and slug is rm-solution
-      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
-        id: "tenant-rm-1",
-        publicToken: "rm-solution-dev",
-      } as never);
-      vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce(null);
+      vi.mocked(resolveCurrentUser).mockResolvedValueOnce({ userId: "user-rm-1" });
+      vi.mocked(prisma.tenantMembership.findFirst).mockResolvedValueOnce(null);
 
       await expect(
         requireTenantAdmin("rm-solution-dev")
@@ -563,11 +567,16 @@ describe("Feature 04 — Google Business Profile Connection Domain & Security Te
     });
 
     it("SECURITY: valid tenant admin resolves by tenant ID or slug", async () => {
-      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
-      vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce(mockTenant as never);
+      vi.mocked(resolveCurrentUser).mockResolvedValueOnce({ userId: "user-rm-1" });
+      vi.mocked(prisma.tenantMembership.findFirst).mockResolvedValueOnce({
+        role: "ADMIN",
+        tenant: mockTenant,
+      } as never);
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(mockTenant as never);
 
       const admin = await requireTenantAdmin("tenant-rm-1");
       expect(admin.tenantId).toBe("tenant-rm-1");
+      expect(admin.userId).toBe("user-rm-1");
       expect(admin.role).toBe("ADMIN");
     });
   });
@@ -576,8 +585,11 @@ describe("Feature 04 — Google Business Profile Connection Domain & Security Te
     it("initiateGoogleConnectAction returns authorization URL on success", async () => {
       const { initiateGoogleConnectAction } = await import("@/app/admin/google/actions");
 
-      vi.mocked(prisma.tenant.findUnique).mockResolvedValue(mockTenant as never);
-      vi.mocked(prisma.tenant.findFirst).mockResolvedValue(mockTenant as never);
+      vi.mocked(resolveCurrentUser).mockResolvedValueOnce({ userId: "user-rm-1" });
+      vi.mocked(prisma.tenantMembership.findFirst).mockResolvedValueOnce({
+        role: "ADMIN",
+        tenant: mockTenant,
+      } as never);
 
       const res = await initiateGoogleConnectAction("tenant-rm-1");
       expect(res.success).toBe(true);
@@ -589,8 +601,12 @@ describe("Feature 04 — Google Business Profile Connection Domain & Security Te
     it("disconnectGoogleAction returns disconnected connection on success", async () => {
       const { disconnectGoogleAction } = await import("@/app/admin/google/actions");
 
-      vi.mocked(prisma.tenant.findUnique).mockResolvedValue(mockTenant as never);
-      vi.mocked(prisma.tenant.findFirst).mockResolvedValue(mockTenant as never);
+      vi.mocked(resolveCurrentUser).mockResolvedValueOnce({ userId: "user-rm-1" });
+      vi.mocked(prisma.tenantMembership.findFirst).mockResolvedValueOnce({
+        role: "ADMIN",
+        tenant: mockTenant,
+      } as never);
+      vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(mockTenant as never);
       vi.mocked(prisma.googleConnection.findUnique).mockResolvedValue(mockConnectionRecord as never);
       vi.mocked(prisma.googleConnection.update).mockResolvedValue({
         ...mockConnectionRecord,

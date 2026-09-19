@@ -6,7 +6,7 @@ Phase 1 — Core features and integration
 
 ## Current goal
 
-Feature 06 — AI-Assisted Google Review Reply Draft
+Feature 00 — Authentication & Tenant Membership Foundation
 
 ## Completed
 
@@ -19,14 +19,35 @@ Feature 06 — AI-Assisted Google Review Reply Draft
 
 ## In progress
 
-None — Feature 06 security fixes completed 2026-09-16.
+**Feature 07 — AI Reply Approval Workflow** (implementation in progress 2026-09-18):
+- Complete the server-side approval lifecycle for ReviewReplyDraft using the authenticated tenant admin context.
+- Preserve exact draft content while tracking approval state metadata and the approving administrator.
+- Ensure edit/regeneration invalidates any prior approval and resets the draft to DRAFT.
+- Keep approval isolated to the authenticated tenant and never publish to Google.
+- Verify approval logic and authorization boundaries with focused tests.
+
+**Feature 00 — Authentication & Tenant Membership Foundation** (security remediation in progress 2026-09-18):
+- Harden the auth configuration so production fails closed without a configured `AUTH_SECRET` and without a configured production provider.
+- Restrict development `Credentials` sign-in to an explicit local-only flag instead of `NODE_ENV !== "production"`.
+- Keep session identity tied to the persisted Prisma `User` record and require `TenantMembership` to authorize admin access.
+- Canonicalize the authenticated tenant ID in the Google location-selection server action so the browser cannot override it.
+- Preserve the existing historical Prisma migrations and avoid rewriting database history while fixing the security boundary and documentation.
+
+The feature remains dependent on environment-specific external auth configuration for live production sign-in, but the repository must no longer silently accept a predictable secret or insecure dev defaults.
 
 ## Next up
 
-1. Feature 07 — Approval workflow (deferred — explicitly out of scope for Feature 06)
-2. Feature 08 — Publication automation (deferred — explicitly out of scope for Feature 06)
+1. Feature 08 — Publication automation (deferred — explicitly out of scope for Feature 07)
 
 ## Recently completed
+
+- **Feature 07 — AI Reply Approval Workflow** (implementation remediation in progress, 2026-09-16):
+  - Added tenant-scoped approval persistence to `ReviewReplyDraft` with `DRAFT` represented by `approved = false` and `APPROVED` by `approved = true`, approval timestamp, optional administrator identity, and a tenant/approval index.
+  - Added a separate Prisma migration for approval fields and the existing `User` relation; the previous Feature 06 migration was left unchanged.
+  - Implemented validated admin approval through the existing `requireTenantAdmin` boundary and an atomic tenant-scoped transition that rejects missing, cross-tenant, repeated, and concurrent approvals safely.
+  - Editing or regenerating a draft clears prior approval metadata. Approval preserves the exact draft content and never changes `GoogleReview`, its existing reply, Google credentials, or Google APIs.
+  - Extended the existing Reviews Inbox with server-returned approval state, approval timestamp, disabled approving state, and safe success/error handling. No publish control was added.
+  - Added focused domain and server-action tests. The remaining prerequisite is a real server-side authentication/session provider and membership resolver; `requireTenantAdmin` currently cannot establish user identity. Live migration status could not be checked because `DATABASE_URL` is not configured in this environment.
 
 - **Feature 06 — Security Hardening** (2026-09-16):
   - **Critical security fix**: All four server actions in `reply-actions.ts` were passing `googleReviewId` or `draftId` to `requireTenantAdmin()`, which expects a tenant identifier. This caused runtime authorization failures.
@@ -63,7 +84,8 @@ None — Feature 06 security fixes completed 2026-09-16.
 
 ## Open questions / deferred decisions
 
-- Exact production authentication provider configuration. (Recorded: will use Next.js server-side auth abstraction; exact provider deferred to a future feature that requires it.)
+- Exact production authentication provider configuration. (No provider dependency, session mechanism, or provider credentials currently exist; must be selected and configured before private admin operations can be enabled.)
+- Feature 07 cannot be marked complete until the real server-side authentication/session provider resolves the current user; membership and `ADMIN` role verification now exist in the auth boundary.
 - Exact AI provider/model and pricing strategy. (Deferred to AI feature.)
 - Exact queue/worker provider. (Deferred to a feature requiring async work.)
 - Exact observability provider. (Deferred to a feature requiring observability.)

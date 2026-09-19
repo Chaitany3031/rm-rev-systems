@@ -1,6 +1,7 @@
 import { Metadata } from "next";
-import { prisma } from "@/lib/db";
+import { requireTenantAdmin } from "@/domains/auth";
 import { getGoogleConnectionForTenant } from "@/domains/google";
+import { AuthenticationError, ForbiddenError } from "@/lib/errors";
 import { GoogleConnectionClient } from "./google-connection-client";
 
 export const metadata: Metadata = {
@@ -21,42 +22,47 @@ export default async function AdminGooglePage({ searchParams }: AdminGooglePageP
   const params = await searchParams;
   const tenantId = params.tenantId;
   const tenantSlug = params.tenantSlug || "rm-solution";
+  let admin: Awaited<ReturnType<typeof requireTenantAdmin>>;
+  let connection: Awaited<ReturnType<typeof getGoogleConnectionForTenant>>;
 
-  // Resolve tenant for administrative view
-  const tenant = await prisma.tenant.findFirst({
-    where: tenantId
-      ? { id: tenantId }
-      : { slug: tenantSlug },
-    select: {
-      id: true,
-      name: true,
-      slug: true,
-    },
-  });
+  try {
+    admin = await requireTenantAdmin(tenantId || tenantSlug);
+    connection = await getGoogleConnectionForTenant(admin.tenantId);
+  } catch (error) {
+    if (error instanceof AuthenticationError) {
+      return <AdminAccessState title="Sign-in required" message="Please sign in to manage this business connection." />;
+    }
 
-  if (!tenant) {
-    return (
-      <main className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="max-w-md w-full p-6 border rounded-lg bg-card text-card-foreground shadow-sm text-center space-y-4">
-          <h1 className="text-xl font-semibold text-foreground">Business Not Found</h1>
-          <p className="text-sm text-muted-foreground">
-            The requested business tenant could not be found. Please verify the identifier or slug.
-          </p>
-        </div>
-      </main>
-    );
+    if (error instanceof ForbiddenError) {
+      return <AdminAccessState title="Access denied" message="You do not have administrator access to this business." />;
+    }
+
+    throw error;
   }
-
-  const connection = await getGoogleConnectionForTenant(tenant.id);
 
   return (
     <main className="min-h-screen bg-background py-10 px-4 sm:px-6 lg:px-8 flex flex-col justify-start">
       <GoogleConnectionClient
-        tenant={tenant}
+        tenant={{
+          id: admin.tenantId,
+          name: admin.tenantName,
+          slug: admin.tenantSlug,
+        }}
         initialConnection={connection}
         initialError={params.error}
         initialStatus={params.status}
       />
+    </main>
+  );
+}
+
+function AdminAccessState({ title, message }: { title: string; message: string }) {
+  return (
+    <main className="min-h-screen bg-background flex items-center justify-center p-4">
+      <div className="max-w-md w-full p-6 border rounded-lg bg-card text-card-foreground shadow-sm text-center space-y-4">
+        <h1 className="text-xl font-semibold text-foreground">{title}</h1>
+        <p className="text-sm text-muted-foreground">{message}</p>
+      </div>
     </main>
   );
 }

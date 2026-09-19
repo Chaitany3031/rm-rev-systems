@@ -20,6 +20,9 @@ export interface ReplyDraftResult {
   model?: string | null;
   createdAt: Date;
   updatedAt: Date;
+  approved?: boolean;
+  approvedAt?: Date | null;
+  approvedById?: string | null;
 }
 
 /**
@@ -93,6 +96,9 @@ export async function generateReplyDraft(
     update: {
       content,
       updatedAt: now,
+      approved: false,
+      approvedAt: null,
+      approvedById: null,
     },
     create: {
       tenantId,
@@ -116,6 +122,9 @@ export async function generateReplyDraft(
     model: persisted.model,
     createdAt: persisted.createdAt,
     updatedAt: persisted.updatedAt,
+    approved: persisted.approved,
+    approvedAt: persisted.approvedAt,
+    approvedById: persisted.approvedById,
   };
 }
 
@@ -149,13 +158,32 @@ export async function updateReplyDraft(
   }
 
   // Update
-  const persisted = await prisma.reviewReplyDraft.update({
-    where: { id: draftId },
+  const approvalReset = existing.approved
+    ? { approved: false, approvedAt: null, approvedById: null }
+    : {};
+  const updated = await prisma.reviewReplyDraft.updateMany({
+    where: {
+      id: draftId,
+      tenantId,
+    },
     data: {
       content: content.trim(),
       updatedAt: new Date(),
+      ...approvalReset,
     },
   });
+
+  if (updated.count === 0) {
+    throw new NotFoundError("Reply draft not found");
+  }
+
+  const persisted = await prisma.reviewReplyDraft.findFirst({
+    where: { id: draftId, tenantId },
+  });
+
+  if (!persisted) {
+    throw new NotFoundError("Reply draft not found");
+  }
 
   log("info", "Reply draft updated", {
     tenantId,
@@ -172,6 +200,9 @@ export async function updateReplyDraft(
     model: persisted.model,
     createdAt: persisted.createdAt,
     updatedAt: persisted.updatedAt,
+    approved: persisted.approved,
+    approvedAt: persisted.approvedAt,
+    approvedById: persisted.approvedById,
   };
 }
 
@@ -246,6 +277,9 @@ export async function regenerateReplyDraft(
     update: {
       content,
       updatedAt: now,
+      approved: false,
+      approvedAt: null,
+      approvedById: null,
     },
     create: {
       tenantId,
@@ -269,6 +303,92 @@ export async function regenerateReplyDraft(
     model: persisted.model,
     createdAt: persisted.createdAt,
     updatedAt: persisted.updatedAt,
+    approved: persisted.approved,
+    approvedAt: persisted.approvedAt,
+    approvedById: persisted.approvedById,
+  };
+}
+
+/**
+ * Approve an existing reply draft.
+ * Authenticated tenant admin only. Draft ownership verified.
+ */
+export async function approveReplyDraft(
+  tenantId: string,
+  draftId: string,
+  approvedById?: string
+): Promise<ReplyDraftResult> {
+  // Find draft scoped to tenant
+  const existing = await prisma.reviewReplyDraft.findFirst({
+    where: {
+      id: draftId,
+      tenantId,
+    },
+  });
+
+  if (!existing) {
+    throw new NotFoundError("Reply draft not found");
+  }
+
+  // Check if already approved
+  if (existing.approved) {
+    throw new ValidationError("Reply draft is already approved");
+  }
+
+  // Atomically claim only an unapproved draft. A concurrent request can update
+  // zero rows and will be reported as already approved below.
+  const now = new Date();
+  const transition = await prisma.reviewReplyDraft.updateMany({
+    where: {
+      id: draftId,
+      tenantId,
+      approved: false,
+    },
+    data: {
+      approved: true,
+      approvedAt: now,
+      approvedById: approvedById ?? null,
+    },
+  });
+
+  if (transition.count === 0) {
+    const current = await prisma.reviewReplyDraft.findFirst({
+      where: { id: draftId, tenantId },
+    });
+
+    if (!current) {
+      throw new NotFoundError("Reply draft not found");
+    }
+
+    throw new ValidationError("Reply draft is already approved");
+  }
+
+  const persisted = await prisma.reviewReplyDraft.findFirst({
+    where: { id: draftId, tenantId },
+  });
+
+  if (!persisted) {
+    throw new NotFoundError("Reply draft not found");
+  }
+
+  log("info", "Reply draft approved", {
+    tenantId,
+    draftId,
+    googleReviewId: persisted.googleReviewId,
+  });
+
+  return {
+    id: persisted.id,
+    tenantId: persisted.tenantId,
+    googleReviewId: persisted.googleReviewId,
+    content: persisted.content,
+    provider: persisted.provider,
+    model: persisted.model,
+    createdAt: persisted.createdAt,
+    updatedAt: persisted.updatedAt,
+    approved: persisted.approved,
+    approvedAt: persisted.approvedAt,
+    approvedById: persisted.approvedById,
   };
 }
 
@@ -297,5 +417,8 @@ export async function getReplyDraft(
     model: draft.model,
     createdAt: draft.createdAt,
     updatedAt: draft.updatedAt,
+    approved: draft.approved,
+    approvedAt: draft.approvedAt,
+    approvedById: draft.approvedById,
   };
 }

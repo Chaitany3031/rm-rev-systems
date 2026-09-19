@@ -28,15 +28,29 @@ Copy the example environment file and fill in your values:
 cp .env.example .env.local
 ```
 
-Edit `.env.local` with your database URL and app URL:
+Edit `.env.local` with your database URL, application URL, and authentication secrets:
 
 ```env
 NODE_ENV=development
 DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/DB_NAME?schema=public
 NEXT_PUBLIC_APP_URL=http://localhost:3000
+AUTH_SECRET=<generate-a-long-random-secret>
+NEXTAUTH_URL=http://localhost:3000
+AUTH_PROVIDER=google
+AUTH_ENABLE_DEV_CREDENTIALS=false
+DEV_AUTH_EMAIL=admin@example.com
+DEV_AUTH_PASSWORD=<set-a-long-random-local-password>
 ```
 
 > **Security**: Never commit `.env.local` or any file containing real credentials. The `.env.example` file contains placeholders only.
+
+### Authentication
+
+The application uses NextAuth.js with JWT-based server sessions. The session cookie is server-side and protected by `AUTH_SECRET`, while the user identity is resolved from the authenticated session before any tenant membership lookup occurs.
+
+CODE IMPLEMENTED: production authentication is configured through the NextAuth provider boundary. The app will use the configured Google OAuth provider when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are available and `AUTH_PROVIDER=google`, while the local development credentials provider remains off by default and only activates when `AUTH_ENABLE_DEV_CREDENTIALS=true` plus `DEV_AUTH_EMAIL` / `DEV_AUTH_PASSWORD` are set.
+
+EXTERNAL CONFIGURATION REQUIRED: for production sign-in, configure a real Google OAuth application in Google Cloud Console, authorize the callback URL, and set the environment variables for `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `AUTH_SECRET`, and `NEXTAUTH_URL` (or the equivalent provider config). Without those values, the app fails closed instead of silently using a public fallback secret or insecure dev login.
 
 ### Install Dependencies
 

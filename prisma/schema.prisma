@@ -16,6 +16,7 @@ model User {
   updatedAt   DateTime           @updatedAt
   memberships TenantMembership[]
   auditLogs   AuditLog[]
+  approvedReplyDrafts ReviewReplyDraft[]
 }
 
 /// Tenants (businesses/organizations) in the multi-tenant system.
@@ -50,6 +51,7 @@ model TenantMembership {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, userId])
+  @@index([userId, tenantId])
 }
 
 /// Audit log for security and business-action history.
@@ -146,12 +148,17 @@ model ReviewReplyDraft {
   model             String?
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
+  approved          Boolean            @default(false)
+  approvedAt        DateTime?
+  approvedById      String?
 
   tenant           Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   googleReview     GoogleReview       @relation(fields: [googleReviewId], references: [id], onDelete: Cascade)
+  approvedBy       User?              @relation(fields: [approvedById], references: [id], onDelete: SetNull)
 
   @@unique([tenantId, googleReviewId])
   @@index([tenantId])
+  @@index([tenantId, approved])
 }
 
 /// Google Business Profile connection for a tenant.

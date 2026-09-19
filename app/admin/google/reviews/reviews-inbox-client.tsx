@@ -7,6 +7,7 @@ import {
   editReplyDraftAction,
   regenerateReplyDraftAction,
   fetchReplyDraftAction,
+  approveReplyDraftAction,
 } from "./reply-actions";
 import type { GoogleReview } from "@prisma/client";
 
@@ -35,15 +36,19 @@ interface ReplyDraftPanelProps {
   tenantId: string;
   review: GoogleReview;
   onDraftUpdated?: () => void;
+  onApprovalUpdate?: () => void;
 }
 
-function ReplyDraftPanel({ tenantId, review, onDraftUpdated }: ReplyDraftPanelProps) {
+function ReplyDraftPanel({ tenantId, review, onDraftUpdated, onApprovalUpdate }: ReplyDraftPanelProps) {
   const [draft, setDraft] = useState<string>("");
   const [draftId, setDraftId] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
+  const [isApproved, setIsApproved] = useState(false);
+  const [approvedAt, setApprovedAt] = useState<Date | null>(null);
   const [editContent, setEditContent] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -59,9 +64,13 @@ function ReplyDraftPanel({ tenantId, review, onDraftUpdated }: ReplyDraftPanelPr
         if (result.success) {
           setDraft(result.data.content);
           setDraftId(result.data.id);
+          setIsApproved(result.data.approved);
+          setApprovedAt(result.data.approvedAt ? new Date(result.data.approvedAt) : null);
         } else {
           setDraft("");
           setDraftId(null);
+          setIsApproved(false);
+          setApprovedAt(null);
         }
       },
       (err: unknown) => {
@@ -84,6 +93,8 @@ function ReplyDraftPanel({ tenantId, review, onDraftUpdated }: ReplyDraftPanelPr
       if (result.success) {
         setDraft(result.data.content);
         setDraftId(result.data.id);
+        setIsApproved(result.data.approved);
+        setApprovedAt(result.data.approvedAt ? new Date(result.data.approvedAt) : null);
         setSuccessMessage("AI reply draft generated successfully.");
         onDraftUpdated?.();
       } else {
@@ -106,6 +117,8 @@ function ReplyDraftPanel({ tenantId, review, onDraftUpdated }: ReplyDraftPanelPr
       if (result.success) {
         setDraft(result.data.content);
         setDraftId(result.data.id);
+        setIsApproved(result.data.approved);
+        setApprovedAt(result.data.approvedAt ? new Date(result.data.approvedAt) : null);
         setSuccessMessage("AI reply draft regenerated successfully.");
         onDraftUpdated?.();
       } else {
@@ -128,6 +141,8 @@ function ReplyDraftPanel({ tenantId, review, onDraftUpdated }: ReplyDraftPanelPr
       const result = await editReplyDraftAction(tenantId, draftId, editContent);
       if (result.success) {
         setDraft(result.data.content);
+        setIsApproved(result.data.approved);
+        setApprovedAt(result.data.approvedAt ? new Date(result.data.approvedAt) : null);
         setSuccessMessage("Reply draft updated successfully.");
         onDraftUpdated?.();
       } else {
@@ -137,6 +152,29 @@ function ReplyDraftPanel({ tenantId, review, onDraftUpdated }: ReplyDraftPanelPr
       setError(err instanceof Error ? err.message : "Failed to update draft");
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // Approve the reply draft
+  const handleApprove = async () => {
+    if (!draftId) return;
+    setIsApproving(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const result = await approveReplyDraftAction(tenantId, draftId);
+      if (result.success) {
+        setIsApproved(true);
+        setApprovedAt(result.data.approvedAt ? new Date(result.data.approvedAt) : null);
+        setSuccessMessage("Reply draft approved successfully.");
+        onApprovalUpdate?.();
+      } else {
+        setError(result.message || "Failed to approve draft");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to approve draft");
+    } finally {
+      setIsApproving(false);
     }
   };
 
@@ -228,8 +266,50 @@ function ReplyDraftPanel({ tenantId, review, onDraftUpdated }: ReplyDraftPanelPr
                       "Generate AI Reply"
                     )}
                   </button>
+                ) : !isApproved ? (
+                  <>
+                    <button
+                      onClick={startEditing}
+                      disabled={isEditing}
+                      className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={handleRegenerate}
+                      disabled={isGenerating || isRegenerating}
+                      className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      {isRegenerating ? (
+                        <>
+                          <svg className="animate-spin -ml-1 mr-2 h-3 w-3 text-gray-600" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                          Regenerating...
+                        </>
+                      ) : (
+                        "Regenerate"
+                      )}
+                    </button>
+                    <button
+                      onClick={handleApprove}
+                      disabled={isApproving || !draft.trim()}
+                      className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {isApproving ? "Approving..." : "Approve Draft"}
+                    </button>
+                  </>
                 ) : (
                   <>
+                    <span className="inline-flex items-center px-3 py-1.5 text-xs font-medium bg-green-100 text-green-800 rounded-full">
+                      Approved
+                    </span>
+                    {approvedAt && (
+                      <span className="text-xs text-gray-500 self-center">
+                        {approvedAt.toLocaleString()}
+                      </span>
+                    )}
                     <button
                       onClick={startEditing}
                       disabled={isEditing}
@@ -551,9 +631,7 @@ export function ReviewsInboxClient({
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <button
-                        onClick={() =>
-                          setSelectedReviewId(selectedReviewId === review.id ? null : review.id)
-                        }
+                        onClick={() => setSelectedReviewId(selectedReviewId === review.id ? null : review.id)}
                         className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 hover:bg-purple-200"
                       >
                         {selectedReviewId === review.id ? "Close" : "AI Reply"}
@@ -611,7 +689,7 @@ export function ReviewsInboxClient({
                 >
                   <span className="sr-only">Next</span>
                   <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 001.414 0l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                    <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 001.414 0l-4 4a1 1 0 001.414 0z" clipRule="evenodd" />
                   </svg>
                 </button>
               </nav>

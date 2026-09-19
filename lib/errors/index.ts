@@ -53,6 +53,22 @@ export class AuthorizationError extends AppError {
   }
 }
 
+/** A request has no authenticated server-side identity. */
+export class AuthenticationError extends AuthorizationError {
+  constructor(message = "Authentication required") {
+    super(message, { code: "UNAUTHENTICATED" });
+    this.name = "AuthenticationError";
+  }
+}
+
+/** An authenticated identity lacks access to the requested resource. */
+export class ForbiddenError extends AuthorizationError {
+  constructor(message = "Forbidden") {
+    super(message, { code: "FORBIDDEN" });
+    this.name = "ForbiddenError";
+  }
+}
+
 /** An external service failed or is unavailable. */
 export class ExternalServiceError extends AppError {
   public readonly service: string;
