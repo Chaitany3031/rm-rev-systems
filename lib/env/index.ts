@@ -25,70 +25,63 @@ export const envSchema = z
       .url("NEXT_PUBLIC_APP_URL must be a valid URL")
       .optional(),
 
-    AUTH_SECRET: z
-      .string()
-      .trim()
-      .min(32, "AUTH_SECRET must be at least 32 characters long")
-      .optional(),
-    AUTH_PROVIDER: z.enum(["google", "credentials", "none"]).default("none"),
-    AUTH_ENABLE_DEV_CREDENTIALS: z
-      .union([z.boolean(), z.string()])
-      .transform((value) => value === true || value === "true" || value === "1")
-      .default(false),
-    AUTH_TRUST_HOST: z
-      .string()
-      .transform((value) => value === "true")
-      .optional(),
-    NEXTAUTH_URL: z.string().url("NEXTAUTH_URL must be a valid URL").optional(),
-    DEV_AUTH_EMAIL: z.string().email("DEV_AUTH_EMAIL must be a valid email").optional(),
-    DEV_AUTH_PASSWORD: z.string().optional(),
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.string().optional(),
+    CLERK_SECRET_KEY: z.string().optional(),
+    CLERK_SIGN_IN_URL: z.string().optional(),
+    CLERK_SIGN_UP_URL: z.string().optional(),
 
     // AI review-draft generation (Feature 03)
-  // Provider-agnostic: the app-level AIProvider abstraction consumes these so the
-  // exact vendor/model can be swapped via configuration without code changes.
-  AI_PROVIDER: z
-    .literal("mock")
-    .default("mock"),
-  AI_MOCK_DRAFT: z
-    .string()
-    .optional(),
-
-  // Google Business Profile Integration (Feature 04)
-  // Provider abstraction: "mock" for local dev/testing, "google" for live Google APIs.
-  GOOGLE_PROVIDER: z
-    .enum(["mock", "google"])
-    .default("mock"),
-  GOOGLE_CLIENT_ID: z
-    .string()
-    .optional(),
-  GOOGLE_CLIENT_SECRET: z
-    .string()
-    .optional(),
-  GOOGLE_OAUTH_REDIRECT_URI: z
-    .string()
-    .url("GOOGLE_OAUTH_REDIRECT_URI must be a valid URL")
-    .optional(),
-    TOKEN_ENCRYPTION_SECRET: z
+    // Provider-agnostic: the app-level AIProvider abstraction consumes these so the
+    // exact vendor/model can be swapped via configuration without code changes.
+    AI_PROVIDER: z
+      .literal("mock")
+      .default("mock"),
+    AI_MOCK_DRAFT: z
       .string()
       .optional(),
+
+    // Google Business Profile Integration (Feature 04)
+    // Provider abstraction: "mock" for local dev/testing, "google" for live Google APIs.
+    GOOGLE_PROVIDER: z
+      .enum(["mock", "google"])
+      .default("mock"),
+    GOOGLE_CLIENT_ID: z
+      .string()
+      .optional(),
+    GOOGLE_CLIENT_SECRET: z
+      .string()
+      .optional(),
+    GOOGLE_OAUTH_REDIRECT_URI: z
+      .string()
+      .url("GOOGLE_OAUTH_REDIRECT_URI must be a valid URL")
+      .optional(),
+    TOKEN_ENCRYPTION_SECRET: z.string().min(1, "TOKEN_ENCRYPTION_SECRET is required"),
   })
   .superRefine((data, ctx) => {
-    const devCredentialsEnabled = data.AUTH_ENABLE_DEV_CREDENTIALS === true;
+    if (data.NODE_ENV === "production") {
+      if (!data.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"],
+          message: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required in production",
+        });
+      }
 
-    if (devCredentialsEnabled && data.NODE_ENV === "production") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["AUTH_ENABLE_DEV_CREDENTIALS"],
-        message: "Development credentials are not allowed in production",
-      });
-    }
+      if (!data.CLERK_SECRET_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["CLERK_SECRET_KEY"],
+          message: "CLERK_SECRET_KEY is required in production",
+        });
+      }
 
-    if (devCredentialsEnabled && (!data.DEV_AUTH_EMAIL || !data.DEV_AUTH_PASSWORD)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["DEV_AUTH_EMAIL"],
-        message: "DEV_AUTH_EMAIL and DEV_AUTH_PASSWORD are required when AUTH_ENABLE_DEV_CREDENTIALS is enabled",
-      });
+      if (!data.TOKEN_ENCRYPTION_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["TOKEN_ENCRYPTION_SECRET"],
+          message: "TOKEN_ENCRYPTION_SECRET is required in production",
+        });
+      }
     }
   });
 
@@ -125,10 +118,25 @@ export function getEnvConfig(): EnvConfig {
     throw new Error(`Environment configuration invalid: ${messages}`);
   }
 
-  if (result.data.NODE_ENV === "production" && !result.data.AUTH_SECRET) {
-    throw new Error("Environment configuration invalid: AUTH_SECRET is required in production");
+  if (
+    result.data.NODE_ENV === "production" &&
+    (!result.data.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || !result.data.CLERK_SECRET_KEY)
+  ) {
+    throw new Error(
+      "Environment configuration invalid: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY are required in production"
+    );
   }
 
   cachedConfig = result.data;
   return cachedConfig;
+}
+
+export function getTokenEncryptionSecret(): string {
+  const secret = getEnvConfig().TOKEN_ENCRYPTION_SECRET;
+
+  if (!secret) {
+    throw new Error("Environment configuration invalid: TOKEN_ENCRYPTION_SECRET is required");
+  }
+
+  return secret;
 }

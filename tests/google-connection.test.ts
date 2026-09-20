@@ -29,6 +29,8 @@ import { NotFoundError, ValidationError, AuthorizationError } from "@/lib/errors
 import { prisma } from "@/lib/db";
 import { resolveCurrentUser } from "@/domains/auth/session";
 
+process.env.TOKEN_ENCRYPTION_SECRET = "test-token-encryption-secret";
+
 // Mock the database client
 vi.mock("@/lib/db", () => ({
   prisma: {

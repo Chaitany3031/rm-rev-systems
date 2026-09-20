@@ -1,18 +1,16 @@
 import crypto from "node:crypto";
-import { getEnvConfig } from "@/lib/env";
+import { getTokenEncryptionSecret } from "@/lib/env";
 import { GoogleOAuthError } from "./errors";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12; // 96 bits recommended for GCM
-const DEFAULT_FALLBACK_SECRET = "rm-rev-systems-local-development-secret-encryption-key";
 
 /**
  * Derives a consistent 32-byte (256-bit) encryption key from environment configuration.
  * In production, this should be supplied via KMS or a dedicated secure environment variable.
  */
 function getEncryptionKey(): Buffer {
-  const env = getEnvConfig();
-  const secret = env.TOKEN_ENCRYPTION_SECRET || DEFAULT_FALLBACK_SECRET;
+  const secret = getTokenEncryptionSecret();
   return crypto.createHash("sha256").update(secret).digest();
 }
 

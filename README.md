@@ -28,29 +28,27 @@ Copy the example environment file and fill in your values:
 cp .env.example .env.local
 ```
 
-Edit `.env.local` with your database URL, application URL, and authentication secrets:
+Edit `.env.local` with your database URL, application URL, and Clerk authentication keys:
 
 ```env
 NODE_ENV=development
 DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/DB_NAME?schema=public
 NEXT_PUBLIC_APP_URL=http://localhost:3000
-AUTH_SECRET=<generate-a-long-random-secret>
-NEXTAUTH_URL=http://localhost:3000
-AUTH_PROVIDER=google
-AUTH_ENABLE_DEV_CREDENTIALS=false
-DEV_AUTH_EMAIL=admin@example.com
-DEV_AUTH_PASSWORD=<set-a-long-random-local-password>
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_your_key
+CLERK_SECRET_KEY=sk_test_your_key
+CLERK_SIGN_IN_URL=/login
+CLERK_SIGN_UP_URL=/sign-up
 ```
 
 > **Security**: Never commit `.env.local` or any file containing real credentials. The `.env.example` file contains placeholders only.
 
 ### Authentication
 
-The application uses NextAuth.js with JWT-based server sessions. The session cookie is server-side and protected by `AUTH_SECRET`, while the user identity is resolved from the authenticated session before any tenant membership lookup occurs.
+Authentication is handled by Clerk. The app resolves the authenticated Clerk user ID on the server and then maps it to the local Prisma `User` record by `clerkUserId` before enforcing tenant membership and `ADMIN` checks.
 
-CODE IMPLEMENTED: production authentication is configured through the NextAuth provider boundary. The app will use the configured Google OAuth provider when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are available and `AUTH_PROVIDER=google`, while the local development credentials provider remains off by default and only activates when `AUTH_ENABLE_DEV_CREDENTIALS=true` plus `DEV_AUTH_EMAIL` / `DEV_AUTH_PASSWORD` are set.
+This keeps the application-level authorization boundary unchanged: the browser never supplies the authenticated identity, and tenant authorization remains database-backed through `TenantMembership` and `requireTenantAdmin()`.
 
-EXTERNAL CONFIGURATION REQUIRED: for production sign-in, configure a real Google OAuth application in Google Cloud Console, authorize the callback URL, and set the environment variables for `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `AUTH_SECRET`, and `NEXTAUTH_URL` (or the equivalent provider config). Without those values, the app fails closed instead of silently using a public fallback secret or insecure dev login.
+The separate Google Business Profile OAuth configuration remains independent of the app authentication provider and is configured via `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` when live Google APIs are enabled.
 
 ### Install Dependencies
 

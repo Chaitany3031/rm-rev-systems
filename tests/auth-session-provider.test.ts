@@ -15,6 +15,10 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
+vi.mock("@clerk/nextjs/server", () => ({
+  currentUser: vi.fn(),
+}));
+
 describe("real authentication provider boundary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -28,18 +32,22 @@ describe("real authentication provider boundary", () => {
     await expect(resolveCurrentUser()).rejects.toThrow("Authentication required");
   });
 
-  it("resolves an authenticated user from the provider session", async () => {
+  it("resolves the local user from the authenticated Clerk user ID", async () => {
     const { auth } = await import("@/auth");
     const { prisma } = await import("@/lib/db");
     const { resolveCurrentUser } = await import("@/domains/auth/session");
 
-    vi.mocked(auth).mockResolvedValueOnce({ user: { id: "user-123", email: "admin@example.com" } } as never);
-    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({ id: "user-123", email: "admin@example.com" } as never);
+    vi.mocked(auth).mockResolvedValueOnce({ userId: "clerk_user_123" } as never);
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      id: "user-123",
+      clerkUserId: "clerk_user_123",
+      email: "admin@example.com",
+    } as never);
 
     await expect(resolveCurrentUser()).resolves.toEqual({ userId: "user-123" });
     expect(prisma.user.findUnique).toHaveBeenCalledWith({
-      where: { id: "user-123" },
-      select: { id: true, email: true },
+      where: { clerkUserId: "clerk_user_123" },
+      select: { id: true, clerkUserId: true, email: true },
     });
   });
 
@@ -48,7 +56,7 @@ describe("real authentication provider boundary", () => {
     const { prisma } = await import("@/lib/db");
     const { resolveCurrentUser } = await import("@/domains/auth/session");
 
-    vi.mocked(auth).mockResolvedValueOnce({ user: { id: "missing-user" } } as never);
+    vi.mocked(auth).mockResolvedValueOnce({ userId: "missing-user" } as never);
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
 
     await expect(resolveCurrentUser()).rejects.toThrow("Authentication required");

@@ -11,6 +11,8 @@ import {
 } from "@/lib/errors";
 import { cn, generateToken, safeEqual, truncateForLog } from "@/lib/utils";
 
+process.env.TOKEN_ENCRYPTION_SECRET = "test-token-encryption-secret";
+
 describe("Foundation Unit Tests", () => {
   describe("Environment configuration & validation", () => {
     it("should provide valid default configuration", () => {
@@ -24,7 +26,9 @@ describe("Foundation Unit Tests", () => {
       const result = validateEnv({
         NODE_ENV: "production",
         DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
-        AUTH_SECRET: "this-is-a-valid-production-secret-123456",
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_valid",
+        CLERK_SECRET_KEY: "sk_test_valid",
+        TOKEN_ENCRYPTION_SECRET: "test-token-encryption-secret",
       });
       expect(result.success).toBe(true);
       if (result.success) {

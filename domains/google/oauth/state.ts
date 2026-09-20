@@ -4,11 +4,9 @@ import { GoogleOAuthError } from "../errors";
 import type { OAuthStatePayload } from "../types";
 
 const STATE_MAX_AGE_MS = 15 * 60 * 1000; // 15 minutes
-const DEFAULT_STATE_SECRET = "rm-rev-systems-local-oauth-state-signing-key";
 
 function getStateSigningSecret(): string {
-  const env = getEnvConfig();
-  return env.TOKEN_ENCRYPTION_SECRET || env.GOOGLE_CLIENT_SECRET || DEFAULT_STATE_SECRET;
+  return getEnvConfig().TOKEN_ENCRYPTION_SECRET;
 }
 
 /**

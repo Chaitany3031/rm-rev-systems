@@ -26,20 +26,21 @@ Feature 00 — Authentication & Tenant Membership Foundation
 - Keep approval isolated to the authenticated tenant and never publish to Google.
 - Verify approval logic and authorization boundaries with focused tests.
 
-**Feature 00 — Authentication & Tenant Membership Foundation** (security remediation in progress 2026-09-18):
-- Harden the auth configuration so production fails closed without a configured `AUTH_SECRET` and without a configured production provider.
-- Restrict development `Credentials` sign-in to an explicit local-only flag instead of `NODE_ENV !== "production"`.
-- Keep session identity tied to the persisted Prisma `User` record and require `TenantMembership` to authorize admin access.
+**Feature 00 — Authentication & Tenant Membership Foundation** (Clerk provider migration in progress 2026-09-18):
+- Replace the legacy auth provider boundary with Clerk while preserving the existing local authorization model.
+- Keep session identity tied to the persisted Prisma `User` record via `clerkUserId` and require `TenantMembership` to authorize admin access.
 - Canonicalize the authenticated tenant ID in the Google location-selection server action so the browser cannot override it.
 - Preserve the existing historical Prisma migrations and avoid rewriting database history while fixing the security boundary and documentation.
 
-The feature remains dependent on environment-specific external auth configuration for live production sign-in, but the repository must no longer silently accept a predictable secret or insecure dev defaults.
+The feature remains dependent on environment-specific Clerk credentials for live production sign-in, but the repository must not silently rely on a deprecated provider configuration or insecure local defaults.
 
 ## Next up
 
 1. Feature 08 — Publication automation (deferred — explicitly out of scope for Feature 07)
 
 ## Recently completed
+
+- **Clerk Auth Migration Security Remediation** (2026-09-20): Removed the encryption-secret fallback path by requiring `TOKEN_ENCRYPTION_SECRET` at the shared environment boundary, while preserving the AES-256-GCM algorithm and ciphertext format. Removed stale Auth.js/NextAuth route and dependency artifacts; Clerk remains the application authentication provider and Google Business Profile OAuth remains separate.
 
 - **Feature 07 — AI Reply Approval Workflow** (implementation remediation in progress, 2026-09-16):
   - Added tenant-scoped approval persistence to `ReviewReplyDraft` with `DRAFT` represented by `approved = false` and `APPROVED` by `approved = true`, approval timestamp, optional administrator identity, and a tenant/approval index.

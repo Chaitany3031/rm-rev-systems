@@ -21,80 +21,45 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
+vi.mock("@clerk/nextjs/server", () => ({
+  currentUser: vi.fn(),
+}));
+
 describe("Authentication and tenant membership authorization", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   describe("Auth configuration boundary", () => {
-    it("requires AUTH_SECRET in production", () => {
+    it("requires Clerk keys in production", () => {
       const result = validateEnv({
         NODE_ENV: "production",
         DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
-        AUTH_SECRET: "short",
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "",
+        CLERK_SECRET_KEY: "",
+        TOKEN_ENCRYPTION_SECRET: "test-token-encryption-secret",
       });
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error.flatten().fieldErrors.AUTH_SECRET).toBeDefined();
+        expect(result.error.flatten().fieldErrors.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY).toBeDefined();
+        expect(result.error.flatten().fieldErrors.CLERK_SECRET_KEY).toBeDefined();
       }
     });
 
-    it("accepts a strong AUTH_SECRET for valid configuration", () => {
+    it("accepts Clerk configuration for valid local development", () => {
       const result = validateEnv({
         NODE_ENV: "development",
         DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
-        AUTH_SECRET: "this-is-a-long-development-secret-123456",
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_abc123",
+        CLERK_SECRET_KEY: "sk_test_abc123",
+        TOKEN_ENCRYPTION_SECRET: "test-token-encryption-secret",
       });
 
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.AUTH_SECRET).toBe("this-is-a-long-development-secret-123456");
-      }
-    });
-
-    it("disables dev credentials by default", () => {
-      const result = validateEnv({
-        NODE_ENV: "development",
-        DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
-        AUTH_SECRET: "this-is-a-long-development-secret-123456",
-      });
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.AUTH_ENABLE_DEV_CREDENTIALS).toBe(false);
-      }
-    });
-
-    it("allows dev credentials only when explicitly enabled", () => {
-      const result = validateEnv({
-        NODE_ENV: "development",
-        DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
-        AUTH_SECRET: "this-is-a-long-development-secret-123456",
-        AUTH_ENABLE_DEV_CREDENTIALS: "true",
-        DEV_AUTH_EMAIL: "admin@example.com",
-        DEV_AUTH_PASSWORD: "super-secret-password",
-      });
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.AUTH_ENABLE_DEV_CREDENTIALS).toBe(true);
-      }
-    });
-
-    it("rejects development credentials in production", () => {
-      const result = validateEnv({
-        NODE_ENV: "production",
-        DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
-        AUTH_SECRET: "this-is-a-long-production-secret-123456",
-        AUTH_ENABLE_DEV_CREDENTIALS: "true",
-        DEV_AUTH_EMAIL: "admin@example.com",
-        DEV_AUTH_PASSWORD: "super-secret-password",
-      });
-
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.flatten().fieldErrors.AUTH_ENABLE_DEV_CREDENTIALS).toBeDefined();
+        expect(result.data.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY).toBe("pk_test_abc123");
+        expect(result.data.CLERK_SECRET_KEY).toBe("sk_test_abc123");
       }
     });
   });
@@ -116,16 +81,20 @@ describe("Authentication and tenant membership authorization", () => {
   });
 
   it("rejects an unknown persisted user after a valid session", async () => {
-    vi.mocked(auth).mockResolvedValue({ user: { id: "user-unknown" } } as never);
+    const { currentUser } = await import("@clerk/nextjs/server");
+
+    vi.mocked(auth).mockResolvedValueOnce({ userId: "clerk_user_unknown" } as never);
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
+    vi.mocked(currentUser).mockResolvedValueOnce(null as never);
 
     await expect(resolveCurrentUser()).rejects.toThrow(AuthenticationError);
   });
 
-  it("uses the authenticated user ID as the membership lookup identity", async () => {
-    vi.mocked(auth).mockResolvedValue({ user: { id: "user-a" } } as never);
+  it("uses the authenticated Clerk user mapping as the membership lookup identity", async () => {
+    vi.mocked(auth).mockResolvedValueOnce({ userId: "clerk_user_a" } as never);
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       id: "user-a",
+      clerkUserId: "clerk_user_a",
       email: "user-a@example.com",
       name: "User A",
     } as never);
@@ -148,9 +117,10 @@ describe("Authentication and tenant membership authorization", () => {
   });
 
   it("accepts a valid ADMIN membership and returns trusted identity", async () => {
-    vi.mocked(auth).mockResolvedValue({ user: { id: "user-a" } } as never);
+    vi.mocked(auth).mockResolvedValueOnce({ userId: "clerk_user_a" } as never);
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       id: "user-a",
+      clerkUserId: "clerk_user_a",
       email: "user-a@example.com",
       name: "User A",
     } as never);
@@ -166,9 +136,10 @@ describe("Authentication and tenant membership authorization", () => {
   });
 
   it("rejects a missing membership", async () => {
-    vi.mocked(auth).mockResolvedValue({ user: { id: "user-a" } } as never);
+    vi.mocked(auth).mockResolvedValueOnce({ userId: "clerk_user_a" } as never);
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       id: "user-a",
+      clerkUserId: "clerk_user_a",
       email: "user-a@example.com",
       name: "User A",
     } as never);
@@ -178,9 +149,10 @@ describe("Authentication and tenant membership authorization", () => {
   });
 
   it("requires ADMIN in the membership query and rejects non-admin members", async () => {
-    vi.mocked(auth).mockResolvedValue({ user: { id: "user-a" } } as never);
+    vi.mocked(auth).mockResolvedValueOnce({ userId: "clerk_user_a" } as never);
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       id: "user-a",
+      clerkUserId: "clerk_user_a",
       email: "user-a@example.com",
       name: "User A",
     } as never);
@@ -195,9 +167,10 @@ describe("Authentication and tenant membership authorization", () => {
   });
 
   it("rejects cross-tenant access when the authenticated user has no membership", async () => {
-    vi.mocked(auth).mockResolvedValue({ user: { id: "user-a" } } as never);
+    vi.mocked(auth).mockResolvedValueOnce({ userId: "clerk_user_a" } as never);
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       id: "user-a",
+      clerkUserId: "clerk_user_a",
       email: "user-a@example.com",
       name: "User A",
     } as never);
@@ -215,9 +188,10 @@ describe("Authentication and tenant membership authorization", () => {
   });
 
   it("does not let a requested tenant override the validated membership tenant", async () => {
-    vi.mocked(auth).mockResolvedValue({ user: { id: "user-a" } } as never);
+    vi.mocked(auth).mockResolvedValueOnce({ userId: "clerk_user_a" } as never);
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       id: "user-a",
+      clerkUserId: "clerk_user_a",
       email: "user-a@example.com",
       name: "User A",
     } as never);
